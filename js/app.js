@@ -9,6 +9,9 @@ const HINTS = {
   arrow: '<b>パス</b>：ドラッグで矢印を描く。「移動」で真ん中の○を引くとカーブになる。',
   run: '<b>ラン</b>：ドラッグで点線矢印（人の動き）を描く。',
   space: '<b>スペース</b>：出し手から、ボールを出したいスペースへドラッグ。着地点に点線の円が付く。「移動」で真ん中の○を引くと浮き球・カーブに。',
+  beam: '<b>ライト</b>：照らしたい選手の足元から外へドラッグ（タップだけでもOK）。上から光の柱が当たる。「編集」でドラッグして動かせる。',
+  glow: '<b>発光</b>：光らせたい選手を四角で囲む。選手の形にそって色が光る（芝の色を見分けて選手だけ切り抜く）。一時停止中・フリーズ中に使うのがおすすめ。',
+  zoom: '<b>ZOOM</b>：拡大したいところの中心から外へドラッグして円を描く（タップだけでもOK）。円の中が拡大される。「編集」で円のふちの●を引くと大きさ、場面リストで倍率を変えられる。',
   spot: '<b>スポットライト</b>：目立たせたい選手や場所を四角で囲むと、そこだけ明るく周りが暗くなる。選手マークの「スポット」を押すと、追いかけながら照らせる。',
   pulse: '<b>強調</b>：矢印・選手マーク・エリア・文字などをタップすると、膨らむ・縮むをくり返して目立つ。もう一度タップで解除。間隔はツール欄で選ぶ。',
   view: '<b>視野</b>：選手の足元（選手マーク）から、見ている方向へドラッグ。選手マークから描くと、選手が動いても視野がついていく。「移動」で先端の●で向きと距離、横の○で広さを変える。',
@@ -230,12 +233,65 @@ function shapeCenter(s, t, W, H){
     case 'ghost': return P(s.b);
     case 'link': { const A = findShape(s.from), B = findShape(s.to); if (A && B){ const a = ringCenter(A.s, t), b = ringCenter(B.s, t); return P([(a[0]+b[0])/2, (a[1]+b[1])/2]); } return [0,0]; }
     case 'text': { const tb = textBox(s, W, H); return [tb.x + tb.bw/2, tb.top + tb.bh/2]; }
+    case 'glow': return P([(s.a[0]+s.b[0])/2, (s.a[1]+s.b[1])/2]);
     default: return s.a ? P(s.a) : [0,0];
   }
 }
 const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* ---------- ZOOM・発光 ---------- */
+// 動画の一部を描く（はみ出す部分は切り詰める。Safari ははみ出すと何も描かないため）
+function drawVideoPart(c, sx, sy, sw, sh, dx, dy, dw, dh){
+  const vw = video.videoWidth, vh = video.videoHeight, kx = dw / sw, ky = dh / sh;
+  let x0 = Math.max(0, sx), y0 = Math.max(0, sy), x1 = Math.min(vw, sx + sw), y1 = Math.min(vh, sy + sh);
+  if (x1 - x0 < 1 || y1 - y0 < 1) return;
+  try { c.drawImage(video, x0, y0, x1 - x0, y1 - y0, dx + (x0 - sx)*kx, dy + (y0 - sy)*ky, (x1 - x0)*kx, (y1 - y0)*ky); } catch(e){}
+}
+const GLOW = new WeakMap();
+/* ライト・発光・ZOOM の自動追尾：基準点（足元／中心）の動きをそのまま図形全体に足す */
+const TRACKABLE = new Set(['beam', 'glow', 'zoom']);
+function anchorOf(s){ return s.type === 'glow' ? [(s.a[0] + s.b[0]) / 2, Math.max(s.a[1], s.b[1])] : s.a; }
+function shiftAt(s, t){ if (!s.track || !s.track.length) return [0, 0]; const c = ringCenter(s, t), a = anchorOf(s); return [c[0] - a[0], c[1] - a[1]]; }
+function placed(s, t){
+  if (!TRACKABLE.has(s.type) || !s.track || !s.track.length) return s;
+  const d = shiftAt(s, t); return { ...s, a:[s.a[0] + d[0], s.a[1] + d[1]], b:[s.b[0] + d[0], s.b[1] + d[1]], _o:s };
+}
+// 四角の中で芝の色（緑系）以外を選手とみなし、その形にそって光る層を作る
+function glowLayer(s, x0, y0, rw, rh, lw){
+  const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return null;
+  const pad = Math.ceil(Math.max(8, lw*4)), key = [video.currentTime.toFixed(3), x0|0, y0|0, rw|0, rh|0, s.c].join(':');
+  const so = s._o || s; let G = GLOW.get(so); if (G && G.key === key) return G;
+  if (!G){ G = { cv:document.createElement('canvas'), m:document.createElement('canvas'), tint:document.createElement('canvas'), pad }; GLOW.set(so, G); }
+  const W = ink.width, H = ink.height, mw = Math.max(12, Math.min(200, Math.round(rw / 2))), mh = Math.max(12, Math.round(mw * rh / rw));
+  const sx = x0 / W * vw, sy = y0 / H * vh, sw = rw / W * vw, sh = rh / H * vh;
+  const m = G.m; m.width = mw; m.height = mh; const mc = m.getContext('2d', { willReadFrequently:true });
+  mc.clearRect(0, 0, mw, mh);
+  try { mc.drawImage(video, Math.max(0, sx), Math.max(0, sy), Math.min(sw, vw - Math.max(0, sx)), Math.min(sh, vh - Math.max(0, sy)), 0, 0, mw, mh); } catch(e){ return null; }
+  let img; try { img = mc.getImageData(0, 0, mw, mh); } catch(e){ return null; }
+  const d = img.data, n = mw*mh, A = new Uint8Array(n), B = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4){
+    const R = d[j], Gc = d[j+1], Bl = d[j+2], mx = Math.max(R, Gc, Bl), df = mx - Math.min(R, Gc, Bl);
+    let turf = false;
+    if (mx > 25 && df > mx*.14){ let h = mx === Gc ? 60*((Bl - R)/df + 2) : mx === R ? 60*((Gc - Bl)/df) : 60*((R - Gc)/df + 4); if (h < 0) h += 360; turf = h >= 50 && h <= 175; }
+    A[i] = turf ? 0 : 1;
+  }
+  const pass = (src, dst, er, horiz) => { const st = horiz ? 1 : mw;
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++){ const i = y*mw + x, lo = horiz ? x > 0 : y > 0, hi = horiz ? x < mw-1 : y < mh-1, v0 = src[i], v1 = lo ? src[i-st] : v0, v2 = hi ? src[i+st] : v0; dst[i] = er ? (v0 & v1 & v2) : (v0 | v1 | v2); } };
+  pass(A, B, true, true); pass(B, A, true, false); pass(A, B, false, true); pass(B, A, false, false);
+  for (let i = 0, j = 0; i < n; i++, j += 4){ d[j] = d[j+1] = d[j+2] = 255; d[j+3] = A[i] ? 255 : 0; }
+  mc.putImageData(img, 0, 0);
+  const tn = G.tint; tn.width = mw; tn.height = mh; const tc = tn.getContext('2d');
+  tc.fillStyle = s.c; tc.fillRect(0, 0, mw, mh); tc.globalCompositeOperation = 'destination-in'; tc.drawImage(m, 0, 0); tc.globalCompositeOperation = 'source-over';
+  G.pad = pad; const cv = G.cv; cv.width = Math.ceil(rw) + pad*2; cv.height = Math.ceil(rh) + pad*2; const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height); g.imageSmoothingEnabled = true;
+  g.shadowColor = s.c; g.shadowBlur = pad*.9;
+  for (let k = 0; k < 3; k++) g.drawImage(tn, pad, pad, rw, rh);
+  g.shadowBlur = pad*.25; for (let k = 0; k < 2; k++) g.drawImage(tn, pad, pad, rw, rh);
+  g.shadowBlur = 0; g.globalCompositeOperation = 'destination-out'; g.drawImage(m, pad, pad, rw, rh); g.globalCompositeOperation = 'source-over';
+  G.key = key; return G;
+}
 function drawShape(s, W, H, al, t, age){
   if (s.type === 'rlabel'){ drawRingLabel(s, W, H, al, t); return; }
+  if (TRACKABLE.has(s.type) && s.track && s !== S.draft) s = placed(s, t);
   const c = ctx; let lw = Math.max(2, W*.0042);
   c.save(); c.globalAlpha = al;
   if (s.pulse && !REDUCED){
@@ -338,6 +394,34 @@ function drawShape(s, W, H, al, t, age){
         c.fillStyle = 'rgba(0,0,0,.55)'; c.strokeStyle = '#fff'; c.beginPath(); c.arc(g.wing[0], g.wing[1], hr*.9, 0, Math.PI*2); c.fill(); c.stroke();
       }
     }
+  } else if (s.type === 'beam'){
+    const [x, y] = P(s.a), rr = Math.max(lw*5, Math.hypot((s.b[0]-s.a[0])*W, (s.b[1]-s.a[1])*H)), wT = rr*.55;
+    c.shadowBlur = 0;
+    const g = c.createLinearGradient(0, 0, 0, y);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.5, 'rgba(255,255,255,.1)'); g.addColorStop(1, 'rgba(255,255,255,.36)');
+    c.fillStyle = g; c.beginPath(); c.moveTo(x - wT, 0); c.lineTo(x + wT, 0); c.lineTo(x + rr, y); c.lineTo(x - rr, y); c.closePath(); c.fill();
+    c.save(); c.translate(x, y); c.scale(1, .42);
+    const rg = c.createRadialGradient(0, 0, 0, 0, 0, rr*1.15); rg.addColorStop(0, 'rgba(255,255,255,.5)'); rg.addColorStop(.7, 'rgba(255,255,255,.22)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = rg; c.beginPath(); c.arc(0, 0, rr*1.15, 0, Math.PI*2); c.fill(); c.restore();
+    if (S.tool === 'move' && S.src.paused){ c.lineWidth = 1.5; c.strokeStyle = 'rgba(255,255,255,.7)'; c.setLineDash([5,4]); c.beginPath(); c.ellipse(x, y, rr, rr*.42, 0, 0, Math.PI*2); c.stroke(); c.setLineDash([]); }
+  } else if (s.type === 'glow'){
+    const x0 = Math.min(s.a[0], s.b[0])*W, y0 = Math.min(s.a[1], s.b[1])*H, rw = Math.abs(s.b[0]-s.a[0])*W, rh = Math.abs(s.b[1]-s.a[1])*H;
+    if (S.draft === (s._o || s) || rw < 4 || rh < 4){ c.shadowBlur = 0; c.lineWidth = 1.5; c.setLineDash([6,4]); c.strokeRect(x0, y0, rw, rh); c.restore(); return; }
+    const T = glowLayer(s, x0, y0, rw, rh, lw);
+    if (T){ c.shadowBlur = 0; c.globalAlpha = al * (REDUCED ? 1 : .82 + .18*Math.sin(performance.now()/260)); c.drawImage(T.cv, x0 - T.pad, y0 - T.pad); }
+    if (S.tool === 'move' && S.src.paused){ c.globalAlpha = 1; c.shadowBlur = 0; c.lineWidth = 1.2; c.strokeStyle = 'rgba(255,255,255,.55)'; c.setLineDash([5,4]); c.strokeRect(x0, y0, rw, rh); c.setLineDash([]); }
+  } else if (s.type === 'zoom'){
+    const [cx, cy] = P(s.a), R = Math.max(16, Math.hypot((s.b[0]-s.a[0])*W, (s.b[1]-s.a[1])*H)), k = s.k || 2;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (vw){
+      const sr = R / k * (vw / W);
+      c.save(); c.shadowBlur = 0; c.beginPath(); c.arc(cx, cy, R, 0, Math.PI*2); c.clip();
+      c.fillStyle = '#000'; c.fillRect(cx - R, cy - R, R*2, R*2);
+      drawVideoPart(c, s.a[0]*vw - sr, s.a[1]*vh - sr, sr*2, sr*2, cx - R, cy - R, R*2, R*2);
+      c.restore();
+    }
+    c.lineWidth = lw*.9; c.beginPath(); c.arc(cx, cy, R, 0, Math.PI*2); c.stroke();
+    if (S.tool === 'move' && S.src.paused){ const hr = Math.max(5, W*.0055); c.shadowBlur = 0; c.lineWidth = 2; c.fillStyle = '#fff'; c.strokeStyle = '#111'; c.beginPath(); c.arc(cx + R, cy, hr, 0, Math.PI*2); c.fill(); c.stroke(); }
   } else if (s.type === 'spot'){
     if (S.tool === 'move' && S.src.paused){
       const e = spotGeom(s, t, W, H); c.shadowBlur = 0; c.lineWidth = 1.5; c.strokeStyle = 'rgba(255,255,255,.7)'; c.setLineDash([5,4]);
@@ -541,6 +625,10 @@ function hitTest(np, only){
         if (r <= g.R && Math.abs(da) <= g.w) d = 8;
       }
     }
+    else if (s.type === 'beam'){ s = placed(s, t); const [x, y] = P(s.a), rr = Math.max(14, Math.hypot((s.b[0]-s.a[0])*W, (s.b[1]-s.a[1])*H)); d = (((p[0]-x)/rr)**2 + ((p[1]-y)/(rr*.42))**2 <= 1.6) ? 0 : (Math.abs(p[0]-x) < rr*.8 && p[1] < y && p[1] > y - rr*4 ? 6 : Infinity); }
+    else if (s.type === 'glow'){ s = placed(s, t); const x0 = Math.min(s.a[0], s.b[0])*W, y0 = Math.min(s.a[1], s.b[1])*H, x1 = Math.max(s.a[0], s.b[0])*W, y1 = Math.max(s.a[1], s.b[1])*H; d = p[0] >= x0 - 6 && p[0] <= x1 + 6 && p[1] >= y0 - 6 && p[1] <= y1 + 6 ? 4 : Infinity; }
+    else if (s.type === 'zoom'){ s = placed(s, t); const [cx, cy] = P(s.a), R = Math.max(16, Math.hypot((s.b[0]-s.a[0])*W, (s.b[1]-s.a[1])*H)), dc = Math.hypot(p[0]-cx, p[1]-cy);
+      if (S.tool === 'move' && Math.hypot(p[0]-cx-R, p[1]-cy) < 14){ d = -1; part = 'r'; } else d = dc <= R ? 3 : Infinity; }
     else if (s.type === 'spot'){ const [cx,cy,rx,ry] = spotGeom(s, t, W, H); d = ((p[0]-cx)/rx)**2 + ((p[1]-cy)/ry)**2 <= 1 ? 6 : Infinity; }
     else if (s.type === 'link'){ const A = findShape(s.from), B = findShape(s.to); if (A && B) d = segDist(p, P(ringCenter(A.s, t)), P(ringCenter(B.s, t))) + 3; }
     else if (s.type === 'pen') for (let k = 1; k < s.pts.length; k++) d = Math.min(d, segDist(p, P(s.pts[k-1]), P(s.pts[k])));
@@ -563,7 +651,7 @@ function hitTest(np, only){
       if (Math.hypot(p[0] - (fx + gw/2), p[1] - fy) < 16){ d = -1; part = 'resize'; }
       else if (p[0] >= fx - gw/2 && p[0] <= fx + gw/2 && p[1] >= fy - gh - 20 && p[1] <= fy + 10) d = 0;
     }
-    if (d < bd){ bd = d; best = { m, i, s, part, idx:s._idx }; }
+    if (d < bd){ bd = d; best = { m, i, s:s._o || s, part, idx:s._idx }; }
     delete s._idx;
   });
   return best;
@@ -620,6 +708,9 @@ ink.addEventListener('pointerdown', e => {
     : S.tool === 'space' ? { type:'arrow', space:true, c:S.color, a:p, b:p }
     : S.tool === 'ring' ? { type:'ring', st:S.ringSt, op:S.ringOp, hl:S.ringHl, c:S.color, a:p, b:p }
     : S.tool === 'spot' ? { type:'spot', c:S.color, a:p, b:p }
+    : S.tool === 'beam' ? { type:'beam', c:S.color, a:p, b:p }
+    : S.tool === 'glow' ? { type:'glow', c:S.color, a:p, b:p }
+    : S.tool === 'zoom' ? { type:'zoom', c:S.color, a:p, b:p, k:2 }
     : { type: S.tool === 'run' ? 'arrow' : S.tool, dash: S.tool === 'run', c:S.color, a:p, b:p };
 });
 function startDrag(h, p, e){
@@ -630,7 +721,7 @@ function startDrag(h, p, e){
       const a = h.s.pts[h.idx], b = h.s.pts[(h.idx+1) % h.s.pts.length];
       h.s.pts.splice(h.idx+1, 0, [(a[0]+b[0])/2, (a[1]+b[1])/2]); h.part = 'v'; h.idx = h.idx + 1;
     }
-    S.drag ={ ...h, start:p, orig:JSON.parse(JSON.stringify(h.s)), t:S.src.t, center: h.s.type === 'ring' ? ringCenter(h.s, S.src.t) : null };
+    S.drag ={ ...h, start:p, orig:JSON.parse(JSON.stringify(h.s)), t:S.src.t, center: h.s.type === 'ring' || (TRACKABLE.has(h.s.type) && h.s.track) ? ringCenter(h.s, S.src.t) : null };
 }
 ink.addEventListener('dblclick', e => {
   if (S.tool !== 'move' || !S.src) return;
@@ -681,6 +772,11 @@ function applyDrag(p){
     if (D.part === 'v') s.pts[D.idx] = p;
     else s.pts = o.pts.map(add);
   } else if (s.type === 'pen') s.pts = o.pts.map(add);
+  else if (TRACKABLE.has(s.type) && s.track && s.track.length){
+    if (s.type === 'zoom' && D.part === 'r'){ const sh = shiftAt(s, D.t); s.b = [p[0] - sh[0], p[1] - sh[1]]; }
+    else setKey(s, D.t, add(D.center));
+  }
+  else if (s.type === 'zoom' && D.part === 'r') s.b = p;
   else { s.a = add(o.a); if (o.b) s.b = add(o.b); }
 }
 function endPointer(){
@@ -694,7 +790,12 @@ function endPointer(){
     if (Math.hypot(d.d[0], d.d[1]) < .02){ toast('選手の足元から、見ている方向へドラッグしてください'); return; }
     snapshot(); ensureMoment(S.src.t).shapes.push(d); save(); renderList(); afterAdd(); return;
   }
-  const ok = d.type === 'pen' ? d.pts.length > 2 : d.type === 'ring' ? true : Math.hypot(d.b[0]-d.a[0], d.b[1]-d.a[1]) > .01;
+  if ((d.type === 'beam' || d.type === 'zoom') && Math.hypot(d.b[0]-d.a[0], d.b[1]-d.a[1]) < .012) d.b = [d.a[0] + (d.type === 'zoom' ? .08 : .025), d.a[1]];
+  if (d.type === 'glow'){
+    if (Math.abs(d.b[0]-d.a[0]) < .012 || Math.abs(d.b[1]-d.a[1]) < .02){ toast('光らせたい選手を四角で囲んでください'); return; }
+    const a0 = d.a, b0 = d.b; d.a = [Math.min(a0[0], b0[0]), Math.min(a0[1], b0[1])]; d.b = [Math.max(a0[0], b0[0]), Math.max(a0[1], b0[1])];
+  }
+  const ok = d.type === 'pen' ? d.pts.length > 2 : d.type === 'ring' || d.type === 'beam' || d.type === 'zoom' ? true : Math.hypot(d.b[0]-d.a[0], d.b[1]-d.a[1]) > .01;
   if (!ok) return;
   if (!d.dash) delete d.dash;
   if (d.type === 'ring'){ d.id = uid(); if (!d.hl) delete d.hl; }
@@ -763,11 +864,13 @@ async function autoTrack(m, s){
   const grab = () => { oc2.drawImage(video, 0, 0, cw, ch); return oc2.getImageData(0, 0, cw, ch).data; };
   const t0 = m.t; await seekTo(t0);
   let frame; try { frame = grab(); } catch(e){ toast('この動画では自動追跡が使えません'); return; }
-  const start = ringCenter(s, t0);
+  const tr = TRACKABLE.has(s.type), start = tr ? (s.track && s.track.length ? ringCenter(s, t0) : anchorOf(s)) : ringCenter(s, t0);
   let cx = start[0]*cw, cy = start[1]*ch;
-  const r = clamp(Math.hypot((s.b[0]-s.a[0])*cw, (s.b[1]-s.a[1])*ch), 5, 50);
-  const tw = Math.max(10, Math.round(r*1.6)), th = Math.max(16, Math.round(r*2.8));
-  const offY = -th + Math.round(r*.3);   // template sits on the player's body, above the feet
+  let r = clamp(Math.hypot((s.b[0]-s.a[0])*cw, (s.b[1]-s.a[1])*ch), 5, 50);
+  let tw = Math.max(10, Math.round(r*1.6)), th = Math.max(16, Math.round(r*2.8));
+  let offY = -th + Math.round(r*.3);   // template sits on the player's body, above the feet
+  if (s.type === 'glow'){ tw = clamp(Math.round(Math.abs(s.b[0]-s.a[0])*cw), 8, 90); th = clamp(Math.round(Math.abs(s.b[1]-s.a[1])*ch), 12, 120); offY = -th; r = clamp(tw/1.6, 5, 50); }
+  if (s.type === 'zoom'){ tw = th = clamp(Math.round(r*1.1), 10, 80); offY = -Math.round(th/2); r = clamp(tw/1.6, 5, 50); }
   const R = Math.round(r*1.1) + 5, STEP = 1/15, MAX = 12;
   const patch = (data, x, y) => { const out = new Float32Array(tw*th*3); let n = 0;
     for (let j = 0; j < th; j++){ const yy = clamp(Math.round(y + j), 0, ch-1);
@@ -851,7 +954,7 @@ function updateUI(now){
 
 /* ---------- timeline (表示期間・カット・フリーズ) ---------- */
 S.sel = null; S.selKind = null; S.pps = 40; S.ppsSet = false; S.clips = null;
-const SHAPE_NAMES = { arrow:'パス', ring:'選手マーク', zone:'エリア', pen:'フリー線', text:'文字', ghost:'分身', view:'視野', link:'つなぐ線', spot:'スポットライト' };
+const SHAPE_NAMES = { arrow:'パス', ring:'選手マーク', zone:'エリア', pen:'フリー線', text:'文字', ghost:'分身', view:'視野', link:'つなぐ線', spot:'スポットライト', beam:'ライト', glow:'発光', zoom:'ZOOM' };
 function shapeLabel(s){
   if (s.type === 'text') return '文字「' + s.s.replace(/\n/g, ' ') + '」';
   if (s.type === 'arrow') return s.space ? 'スペースへのパス' : s.dash ? 'ラン' : 'パス';
@@ -1188,7 +1291,7 @@ function renderList(){
     { const row = document.createElement('div'); row.className = 'm-item';
       row.innerHTML = `<i class="dot" style="background:var(--muted)"></i><span>コメント</span>${untilHTML(m.cuntil)}`;
       bindUntil(row, m, 'cuntil'); items.appendChild(row); }
-    const NAMES = { arrow:'パス', ring:'選手マーク', zone:'エリア', pen:'フリー線', text:'文字', ghost:'分身', view:'視野', link:'つなぐ線', spot:'スポットライト' };
+    const NAMES = { arrow:'パス', ring:'選手マーク', zone:'エリア', pen:'フリー線', text:'文字', ghost:'分身', view:'視野', link:'つなぐ線', spot:'スポットライト', beam:'ライト', glow:'発光', zoom:'ZOOM' };
     const cnt = {};
     m.shapes.forEach(s => {
       const row = document.createElement('div'); row.className = 'm-item';
@@ -1203,8 +1306,11 @@ function renderList(){
         extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       } else if (s.type === 'ghost'){
         extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button>`;
+      } else if (s.type === 'zoom'){
+        extra = `<button type="button" data-a="zk">倍率：${s.k || 2}倍</button>`;
       }
-      const te = s.type === 'ring' ? trackEnd(s) : -1;
+      if (TRACKABLE.has(s.type)) extra += `<button type="button" data-a="track">自動で追いかける</button>${trackEnd(s) > 0 ? '<button type="button" data-a="clear">追従をやめる</button>' : ''}`;
+      const te = s.type === 'ring' || TRACKABLE.has(s.type) ? trackEnd(s) : -1;
       row.innerHTML = `<i class="dot" style="background:${s.c || '#fff'}"></i><span></span>${extra}${untilHTML(s.until)}`;
       row.querySelector('span').textContent = s.type === 'text'
         ? `文字「${(t => t.length > 10 ? t.slice(0,10) + '…' : t)(s.s.replace(/\n/g, ' '))}」`
@@ -1220,6 +1326,11 @@ function renderList(){
         q('track').onclick = () => { snapshot(); autoTrack(m, s); };
         if (q('clear')) q('clear').onclick = () => { snapshot(); const c0 = ringCenter(s, m.t), dx = c0[0]-s.a[0], dy = c0[1]-s.a[1]; s.a = c0; s.b = [s.b[0]+dx, s.b[1]+dy]; delete s.track; save(); renderList(); };
       }
+      if (TRACKABLE.has(s.type)){
+        q('track').onclick = () => { snapshot(); autoTrack(m, s); };
+        if (q('clear')) q('clear').onclick = () => { snapshot(); delete s.track; save(); renderList(); };
+      }
+      if (s.type === 'zoom') q('zk').onclick = () => { snapshot(); const z = [1.5, 2, 3], i = z.indexOf(s.k || 2); s.k = z[(i + 1) % z.length]; save(); renderList(); };
       if (s.type === 'ghost') q('replay').onclick = () => { S.src.pause(); seek(m.t); S.enter.delete(m.id); };
       if (s.type === 'ghost' || s.type === 'ring'){
         const lb = q('label');
@@ -1275,7 +1386,7 @@ function setTool(t){
   if (t !== 'move' && !S.exporting) S.lastAdd = t;
   updMode();
 }
-const TOOL_NAMES = { arrow:'パス', run:'ラン', space:'スペース', ring:'選手', spot:'スポットライト', pulse:'強調', view:'視野', link:'つなぐ', ghost:'分身', tri:'三角', zone:'四角', pen:'フリー', text:'文字', erase:'消す' };
+const TOOL_NAMES = { arrow:'パス', run:'ラン', space:'スペース', ring:'選手', spot:'スポットライト', beam:'ライト', glow:'発光', zoom:'ZOOM', pulse:'強調', view:'視野', link:'つなぐ', ghost:'分身', tri:'三角', zone:'四角', pen:'フリー', text:'文字', erase:'消す' };
 function updMode(){
   const b = $('#modeb'); if (!b) return;
   b.hidden = !S.src;
