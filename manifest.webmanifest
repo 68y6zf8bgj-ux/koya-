@@ -1,8 +1,9 @@
 {
-  "name": "N1 プレー分析ボード",
-  "short_name": "N1分析",
-  "description": "試合・練習の動画に矢印・選手マーク・コメント・一時停止を書き込む分析アプリ",
+  "name": "K-analyst",
+  "short_name": "K-analyst",
+  "description": "試合・練習の動画に矢印・選手マーク・コメント・フリーズを書き込み、分析動画として書き出すアプリ",
   "lang": "ja",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
