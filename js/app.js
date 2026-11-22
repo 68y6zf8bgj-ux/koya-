@@ -871,53 +871,145 @@ textin.addEventListener('blur', commitText);
 
 /* ---------- auto tracking (選手マークの追従) ---------- */
 function seekTo(t){ return new Promise(res => { let done = false; const fin = () => { if (done) return; done = true; video.removeEventListener('seeked', fin); res(); }; video.addEventListener('seeked', fin); setTimeout(fin, 2000); video.currentTime = t; }); }
-async function autoTrack(m, s){
+/* ---------- 自動追跡 ----------
+   動きの予測 ＋ 見た目の照合（正規化相互相関）＋ 芝の色から切り出した選手の形 で追いかける。
+   一瞬隠れても予測で進み、見えたら捕まえ直す。見失ったところで止まる。 */
+const turfPx = (R, G, B) => {
+  const mx = R > G ? (R > B ? R : B) : (G > B ? G : B), mn = R < G ? (R < B ? R : B) : (G < B ? G : B), df = mx - mn;
+  if (mx <= 25 || df <= mx * .14) return false;
+  let h = mx === G ? 60 * ((B - R) / df + 2) : mx === R ? 60 * ((G - B) / df) : 60 * ((R - G) / df + 4);
+  if (h < 0) h += 360; return h >= 50 && h <= 175;
+};
+// 範囲の中の「芝ではない」かたまりを探す
+function blobsIn(data, cw, ch, x0, y0, x1, y1){
+  x0 = Math.max(0, x0 | 0); y0 = Math.max(0, y0 | 0); x1 = Math.min(cw - 1, x1 | 0); y1 = Math.min(ch - 1, y1 | 0);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1; if (w < 2 || h < 2) return [];
+  const mk = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){ const o = ((y0 + y) * cw + x0 + x) * 4; mk[y * w + x] = turfPx(data[o], data[o+1], data[o+2]) ? 0 : 1; }
+  const out = [], st = new Int32Array(w * h);
+  for (let i = 0; i < w * h; i++){
+    if (mk[i] !== 1) continue;
+    let n = 0, sp = 0, minx = 1e9, maxx = -1, miny = 1e9, maxy = -1, sx = 0; st[sp++] = i; mk[i] = 2;
+    while (sp){ const j = st[--sp], x = j % w, y = (j / w) | 0; n++; sx += x;
+      if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+      if (x > 0 && mk[j-1] === 1){ mk[j-1] = 2; st[sp++] = j-1; } if (x < w-1 && mk[j+1] === 1){ mk[j+1] = 2; st[sp++] = j+1; }
+      if (y > 0 && mk[j-w] === 1){ mk[j-w] = 2; st[sp++] = j-w; } if (y < h-1 && mk[j+w] === 1){ mk[j+w] = 2; st[sp++] = j+w; } }
+    if (n >= 6) out.push({ n, x0:x0 + minx, x1:x0 + maxx, y0:y0 + miny, y1:y0 + maxy, cx:x0 + sx / n });
+  }
+  return out;
+}
+function retrack(m, s){
+  const t = S.src.t; if (t < m.t - .05){ toast('この図形が出てくる位置より後ろで押してください'); return; }
+  autoTrack(m, s, Math.max(t, m.t));
+}
+async function autoTrack(m, s, fromT){
   if (!S.src || S.tracking) return;
   S.src.pause(); clearHold();
-  const vw = video.videoWidth, vh = video.videoHeight, cw = 480, ch = Math.round(vh * cw / vw);
+  const vw = video.videoWidth, vh = video.videoHeight, cw = 640, ch = Math.round(vh * cw / vw);
   const oc = document.createElement('canvas'); oc.width = cw; oc.height = ch; const oc2 = oc.getContext('2d', { willReadFrequently:true });
   const grab = () => { oc2.drawImage(video, 0, 0, cw, ch); return oc2.getImageData(0, 0, cw, ch).data; };
-  const t0 = m.t; await seekTo(t0);
+  const t0 = fromT != null ? fromT : m.t; await seekTo(t0);
   let frame; try { frame = grab(); } catch(e){ toast('この動画では自動追跡が使えません'); return; }
-  const tr = TRACKABLE.has(s.type), start = tr ? (s.track && s.track.length ? ringCenter(s, t0) : anchorOf(s)) : ringCenter(s, t0);
-  let cx = start[0]*cw, cy = start[1]*ch;
-  let r = clamp(Math.hypot((s.b[0]-s.a[0])*cw, (s.b[1]-s.a[1])*ch), 5, 50);
-  let tw = Math.max(10, Math.round(r*1.6)), th = Math.max(16, Math.round(r*2.8));
-  let offY = -th + Math.round(r*.3);   // template sits on the player's body, above the feet
-  if (s.type === 'glow'){ tw = clamp(Math.round(Math.abs(s.b[0]-s.a[0])*cw), 8, 90); th = clamp(Math.round(Math.abs(s.b[1]-s.a[1])*ch), 12, 120); offY = -th; r = clamp(tw/1.6, 5, 50); }
-  if (s.type === 'zoom'){ tw = th = clamp(Math.round(r*1.1), 10, 80); offY = -Math.round(th/2); r = clamp(tw/1.6, 5, 50); }
-  const R = Math.round(r*1.1) + 5, STEP = 1/15, MAX = 12;
-  const patch = (data, x, y) => { const out = new Float32Array(tw*th*3); let n = 0;
-    for (let j = 0; j < th; j++){ const yy = clamp(Math.round(y + j), 0, ch-1);
-      for (let i = 0; i < tw; i++){ const xx = clamp(Math.round(x + i), 0, cw-1), o = (yy*cw + xx)*4; out[n++] = data[o]; out[n++] = data[o+1]; out[n++] = data[o+2]; } }
-    return out; };
-  const ssd = (data, tpl, x, y) => { let sum = 0, cnt = 0;
-    for (let j = 0; j < th; j += 2){ const yy = clamp(y + j, 0, ch-1);
-      for (let i = 0; i < tw; i += 2){ const xx = clamp(x + i, 0, cw-1), o = (yy*cw + xx)*4, q = (j*tw + i)*3;
-        const a = data[o]-tpl[q], b = data[o+1]-tpl[q+1], c = data[o+2]-tpl[q+2]; sum += a*a + b*b + c*c; cnt++; } }
-    return sum / cnt / 3; };
-  let tpl = patch(frame, cx - tw/2, cy + offY);
-  s.track = [[t0, start[0], start[1]]];
+  const tr = TRACKABLE.has(s.type);
+  const start = (s.track && s.track.length) ? ringCenter(s, t0) : (tr ? anchorOf(s) : s.a);
+  const A = [start[0] * cw, start[1] * ch];
+  // 大きさの目安
+  let r = Math.hypot((s.b[0]-s.a[0])*cw, (s.b[1]-s.a[1])*ch);
+  if (s.type === 'glow') r = Math.abs(s.b[0]-s.a[0])*cw / 2;
+  if (s.type === 'zoom') r = r / 2;
+  r = clamp(r, 4, 60);
+  // 基準点の近くの選手（芝ではないかたまり）を探して、体の四角を決める
+  const near = blobsIn(frame, cw, ch, A[0] - r*3, A[1] - r*7, A[0] + r*3, A[1] + r*1.5)
+    .filter(b => b.n < r*r*40).map(b => ({ b, d:Math.hypot((b.x0 + b.x1)/2 - A[0], b.y1 - A[1]) }))
+    .sort((p, q) => p.d - q.d)[0];
+  let bw, bh, bx, by;   // 体の四角（左上と大きさ）
+  if (near && near.d < r * 3){ const b = near.b; bw = b.x1 - b.x0 + 1; bh = b.y1 - b.y0 + 1; bx = b.x0; by = b.y0; }
+  else { bw = Math.max(6, Math.round(r*1.6)); bh = Math.max(10, Math.round(r*2.8)); bx = A[0] - bw/2; by = A[1] - bh + r*.3; }
+  const area0 = bw * bh;
+  const M = 3, tw = Math.round(bw + M*2), th = Math.round(bh + M*2);   // 周りの芝も少し入れて形をはっきりさせる
+  const off = [A[0] - (bx + bw/2), A[1] - (by + bh)];                 // 体の四角（下の真ん中）から基準点までのずれ
+  const stp = Math.max(1, Math.round(Math.sqrt(tw * th / 260)));     // 照合に使う点を間引く
+  const pts = []; for (let j = 0; j < th; j += stp) for (let i = 0; i < tw; i += stp) pts.push([i, j]);
+  const np = pts.length;
+  const sample = (data, x, y) => { const v = new Float32Array(np * 3);
+    for (let k = 0; k < np; k++){ const xx = clamp(Math.round(x + pts[k][0]), 0, cw-1), yy = clamp(Math.round(y + pts[k][1]), 0, ch-1), o = (yy*cw + xx)*4; v[k*3] = data[o]; v[k*3+1] = data[o+1]; v[k*3+2] = data[o+2]; }
+    return v; };
+  const center = v => { const mu = [0,0,0]; for (let k = 0; k < np; k++){ mu[0] += v[k*3]; mu[1] += v[k*3+1]; mu[2] += v[k*3+2]; } mu[0] /= np; mu[1] /= np; mu[2] /= np;
+    let nn = 0; for (let k = 0; k < np; k++) for (let c = 0; c < 3; c++){ v[k*3+c] -= mu[c]; nn += v[k*3+c]**2; } return Math.sqrt(nn) || 1; };
+  let T = sample(frame, bx - M, by - M), Tn = center(T);
+  const ncc = (data, x, y) => {
+    let cr = 0, s1r = 0, s1g = 0, s1b = 0, s2 = 0;
+    for (let k = 0; k < np; k++){
+      const xx = clamp(Math.round(x + pts[k][0]), 0, cw-1), yy = clamp(Math.round(y + pts[k][1]), 0, ch-1), o = (yy*cw + xx)*4;
+      const R = data[o], G = data[o+1], B = data[o+2];
+      cr += T[k*3]*R + T[k*3+1]*G + T[k*3+2]*B; s1r += R; s1g += G; s1b += B; s2 += R*R + G*G + B*B;
+    }
+    const vr = s2 - (s1r*s1r + s1g*s1g + s1b*s1b) / np; return vr > 1 ? cr / (Tn * Math.sqrt(vr)) : 0;
+  };
+  // 追跡の状態
+  let px = bx, py = by, vx = 0, vy = 0, lastT = t0, lostSince = null, lastGood = t0, n = 0;
+  if (fromT != null && s.track) s.track = s.track.filter(k => k[0] < t0 - 1e-3); else s.track = [];
+  const put = t => setKey(s, t, [clamp((px + bw/2 + off[0]) / cw, 0, 1), clamp((py + bh + off[1]) / ch, 0, 1)]);
+  put(t0);
   S.tracking = { stop:false, s, t0, t:t0 };
-  let t = t0, lost = false;
-  while (!S.tracking.stop && t + STEP <= video.duration && t - t0 < MAX){
-    t += STEP; await seekTo(t);
-    frame = grab();
-    let best = Infinity, bx = cx, by = cy;
-    const bx0 = Math.round(cx - tw/2), by0 = Math.round(cy + offY);
-    for (let dy = -R; dy <= R; dy += 2) for (let dx = -R; dx <= R; dx += 2){ const v = ssd(frame, tpl, bx0 + dx, by0 + dy); if (v < best){ best = v; bx = dx; by = dy; } }
-    const fx = bx, fy = by;
-    for (let dy = fy-1; dy <= fy+1; dy++) for (let dx = fx-1; dx <= fx+1; dx++){ const v = ssd(frame, tpl, bx0 + dx, by0 + dy); if (v < best){ best = v; bx = dx; by = dy; } }
-    if (best > 2600){ lost = true; break; }
-    cx = clamp(cx + bx, 0, cw-1); cy = clamp(cy + by, 0, ch-1);
-    const fresh = patch(frame, cx - tw/2, cy + offY);
-    for (let k = 0; k < tpl.length; k++) tpl[k] = tpl[k]*.8 + fresh[k]*.2;
-    setKey(s, t, [cx/cw, cy/ch]);
-    S.tracking.t = t;
+  const MAXLOST = 1.0, MAXLEN = 180;
+  const onFrame = t => {
+    const dt = t - lastT; if (dt <= 1e-4) return true;
+    if (dt > .5){ lostSince = lostSince ?? lastT; }
+    const data = grab();
+    // 予測した位置を中心に探す
+    const qx = px + vx * dt, qy = py + vy * dt;
+    // 探す範囲：ふだんは予測のすぐ近くだけ。隠れている時間が長いほど広げる（遠くの似た選手に飛び移らないため）
+    const lostDur = lostSince != null ? t - lostSince : 0;
+    const R = clamp(Math.max(bw, bh, 8) * (.7 + 2.5 * lostDur) + 3, 6, 140);
+    // 予測から離れるほど点を引く（選手1人分ずれると −1）。似た選手が隣にいても乗り移りにくくする
+    const sz = Math.max(bw, bh, 8), score = (x, y) => { const d = Math.hypot(x - qx, y - qy) / sz; return ncc(data, x - M, y - M) - d * d; };
+    let best = -9, bxx = qx, byy = qy;
+    const cs = R > 40 ? 3 : 2;
+    for (let dy = -R; dy <= R; dy += cs) for (let dx = -R; dx <= R; dx += cs){ const v = score(qx + dx, qy + dy); if (v > best){ best = v; bxx = qx + dx; byy = qy + dy; } }
+    const fx = bxx, fy = byy;
+    for (let dy = -cs; dy <= cs; dy++) for (let dx = -cs; dx <= cs; dx++){ const v = score(fx + dx, fy + dy); if (v > best){ best = v; bxx = fx + dx; byy = fy + dy; } }
+    const raw = ncc(data, bxx - M, byy - M);
+    if (raw > .5 && best > .5){
+      // 一部が隠れて照合が弱いときは、予測と半分ずつにして引っぱられないようにする
+      if (raw < .8){ bxx = (bxx + qx) / 2; byy = (byy + qy) / 2; }
+      // 見つかった：芝から切り出した形で足元を合わせる（隣とくっついているときは合わせない）
+      const bl = blobsIn(data, cw, ch, bxx - 4, byy - 4, bxx + bw + 4, byy + bh + 6)
+        .filter(b => b.n > area0 * .25 && b.n < area0 * 2.2 && (b.x1 - b.x0 + 1) < bw * 1.8).sort((a, c) => c.n - a.n)[0];
+      if (bl && raw > .8){ const nx = (bl.x0 + bl.x1) / 2 - bw / 2, ny = bl.y1 + 1 - bh; bxx = bxx * .5 + nx * .5; byy = byy * .5 + ny * .5; }
+      if (raw > .75){ const nvx = (bxx - px) / dt, nvy = (byy - py) / dt; vx = vx * .6 + nvx * .4; vy = vy * .6 + nvy * .4; }
+      px = bxx; py = byy; lostSince = null; lastGood = t;
+      if (raw > .7){ const nv = sample(data, px - M, py - M); center(nv); for (let k = 0; k < T.length; k++) T[k] = T[k] * .9 + nv[k] * .1; let nn = 0; for (let k = 0; k < T.length; k++) nn += T[k]*T[k]; Tn = Math.sqrt(nn) || 1; }
+    } else {
+      // 隠れた・見失った：しばらくは予測どおりに進める
+      lostSince = lostSince ?? t; px = qx; py = qy; vx *= .9; vy *= .9;
+      if (t - lostSince > MAXLOST) return false;
+    }
+    put(t); lastT = t; n++; S.tracking.t = t;
+    return !S.tracking.stop && t < video.duration - .05 && t - t0 < MAXLEN;
+  };
+  // 動画を 0.5 倍速で流しながら、コマが来るたびに追いかける（使えない環境では 1/15 秒ずつ進める）
+  if (video.requestVideoFrameCallback){
+    const mu = video.muted; video.muted = true; video.playbackRate = .5;
+    await new Promise(res => {
+      let done = false; const fin = () => { if (!done){ done = true; res(); } };
+      const cb = (now, md) => { if (done) return; let go = false; try { go = onFrame(md.mediaTime); } catch(e){ go = false; } if (!go || S.tracking.stop){ fin(); return; } video.requestVideoFrameCallback(cb); };
+      video.requestVideoFrameCallback(cb); video.addEventListener('ended', fin, { once:true });
+      const p = video.play(); if (p && p.catch) p.catch(fin);
+    });
+    video.pause(); video.muted = mu; video.playbackRate = +$('#speed').value;
+  } else {
+    let t = t0;
+    while (!S.tracking.stop && t + 1/15 <= video.duration){ t += 1/15; await seekTo(t); if (!onFrame(t)) break; }
   }
-  const secs = (S.tracking.t - t0).toFixed(1), stopped = S.tracking.stop;
+  // 見失ったあとに予測で置いた分は消す
+  const lost = lostSince != null;
+  if (lost) s.track = s.track.filter(k => k[0] <= lastGood + 1e-3);
+  // 細かいぶれをならす
+  const ks = s.track; for (let pass = 0; pass < 2; pass++) for (let i = 1; i < ks.length - 1; i++){ if (ks[i][0] < t0) continue; ks[i][1] = (ks[i-1][1] + ks[i][1]*2 + ks[i+1][1]) / 4; ks[i][2] = (ks[i-1][2] + ks[i][2]*2 + ks[i+1][2]) / 4; }
+  const stopped = S.tracking.stop, secs = (lastGood - t0).toFixed(1);
   S.tracking = null; save(); renderList(); seek(t0);
-  toast(lost ? `${secs}秒まで追いかけました。ここから先は見失ったので、「移動」でマークをずらすと続きを覚えます` : stopped ? `${secs}秒分を追いかけて止めました` : `${secs}秒分を追いかけました`, 4500);
+  toast(lost ? `${secs}秒まで追いかけました。見失ったところでマークを正しい位置に動かし「ここから追いかけ直す」を押すと続きを追えます` : stopped ? `${secs}秒分を追いかけて止めました` : `${secs}秒分を追いかけました`, 6000);
 }
 
 /* ---------- UI ---------- */
@@ -1158,7 +1250,7 @@ function renderTlBar(){
   let name = '', range = '', acts = '';
   if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = `<button type="button" data-a="split">ここで分割</button><button type="button" data-a="dup">複製</button><button type="button" data-a="raw" title="図形もフリーズも入れていない元の映像のまま、すぐ後ろにもう一度入れる">素の映像で複製</button><button type="button" data-a="fx" aria-pressed="${!(clipFlag(c) & NOFX)}">図形：${clipFlag(c) & NOFX ? 'なし' : 'あり'}</button><button type="button" data-a="frz" aria-pressed="${!(clipFlag(c) & NOFRZ)}">フリーズ：${clipFlag(c) & NOFRZ ? 'なし' : 'あり'}</button><button type="button" class="del" data-a="delclip">この部分を削除</button>`; }
   else if (S.selKind === 'f'){ const m = S.sel; name = '❄ フリーズ'; range = `${m.pause.toFixed(1)}秒`; acts = '<button type="button" data-a="f-">−0.5秒</button><button type="button" data-a="f+">＋0.5秒</button><button type="button" class="del" data-a="delf">削除</button>'; }
-  else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
+  else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + (it.s && (it.s.type === 'ring' || TRACKABLE.has(it.s.type)) ? '<button type="button" data-a="trk">追いかける</button>' + (trackEnd(it.s) > 0 ? '<button type="button" data-a="retrk">ここから追いかけ直す</button>' : '') : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
   if (name) h += `<div class="tl2-row"><span class="selname"></span><span class="rng">${range}</span>${acts}<button type="button" data-a="x">選択解除</button></div>`;
   else h += '<div class="tl2-row tl2-help">白い線をドラッグで動画を動かす・バーをタップで選択</div>';
   bar.innerHTML = h; const sn = bar.querySelector('.selname'); if (sn) sn.textContent = name;
@@ -1208,6 +1300,8 @@ $('#tl2Bar').addEventListener('click', e => {
     select(null); save(); renderList(); return;
   }
   const it = selItem(); if (!it) return;
+  if (a === 'trk'){ snapshot(); autoTrack(it.m, it.s); return; }
+  if (a === 'retrk'){ snapshot(); retrack(it.m, it.s); return; }
   if (a === 'del'){
     snapshot();
     if (it.kind === 'c'){ it.m.comment = ''; delete it.m.ct0; delete it.m.cuntil; }
@@ -1364,13 +1458,13 @@ function renderList(){
         extra = `<button type="button" data-a="edit">文字を直す</button><button type="button" data-a="fs">大きさ：${sizeName(s.fs)}</button><button type="button" data-a="bg">${bgDot(cur.key)}背景：${cur.name}</button>`;
       } else if (s.type === 'ring'){
         const opL = { 1:'濃い', 0.6:'普通', 0.3:'薄い' }[s.op ?? .6] || '普通', te = trackEnd(s);
-        extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="clear">追従をやめる</button>' : ''}`;
+        extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       } else if (s.type === 'ghost'){
         extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button>`;
       } else if (s.type === 'zoom'){
         extra = `<button type="button" data-a="zk">倍率：${s.k || 2}倍</button>`;
       }
-      if (TRACKABLE.has(s.type)) extra += `<button type="button" data-a="track">自動で追いかける</button>${trackEnd(s) > 0 ? '<button type="button" data-a="clear">追従をやめる</button>' : ''}`;
+      if (TRACKABLE.has(s.type)) extra += `<button type="button" data-a="track">自動で追いかける</button>${trackEnd(s) > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       const te = s.type === 'ring' || TRACKABLE.has(s.type) ? trackEnd(s) : -1;
       row.innerHTML = `<i class="dot" style="background:${s.c || '#fff'}"></i><span></span>${extra}${untilHTML(s.until)}`;
       row.querySelector('span').textContent = s.type === 'text'
@@ -1385,10 +1479,12 @@ function renderList(){
         q('hl').onclick = () => { snapshot(); if (s.hl) delete s.hl; else s.hl = true; save(); renderList(); };
         q('op').onclick = () => { snapshot(); const cur = s.op ?? .6; s.op = cur === 1 ? .6 : cur === .6 ? .3 : 1; save(); renderList(); };
         q('track').onclick = () => { snapshot(); autoTrack(m, s); };
+        if (q('retrack')) q('retrack').onclick = () => { snapshot(); retrack(m, s); };
         if (q('clear')) q('clear').onclick = () => { snapshot(); const c0 = ringCenter(s, m.t), dx = c0[0]-s.a[0], dy = c0[1]-s.a[1]; s.a = c0; s.b = [s.b[0]+dx, s.b[1]+dy]; delete s.track; save(); renderList(); };
       }
       if (TRACKABLE.has(s.type)){
         q('track').onclick = () => { snapshot(); autoTrack(m, s); };
+        if (q('retrack')) q('retrack').onclick = () => { snapshot(); retrack(m, s); };
         if (q('clear')) q('clear').onclick = () => { snapshot(); delete s.track; save(); renderList(); };
       }
       if (s.type === 'zoom') q('zk').onclick = () => { snapshot(); const z = [1.5, 2, 3], i = z.indexOf(s.k || 2); s.k = z[(i + 1) % z.length]; save(); renderList(); };
