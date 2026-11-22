@@ -442,6 +442,7 @@ function drawShape(s, W, H, al, t, age){
       c.beginPath(); c.ellipse(e[0], e[1], e[2], e[3], 0, 0, Math.PI*2); c.stroke();
     }
   } else if (s.type === 'ghost'){
+    if (s.erase && s.patch){ const pim = getImg(s.patch.url); if (pim.complete && pim.naturalWidth){ const [px0, py0, pw, ph] = s.patch.r; c.save(); c.shadowBlur = 0; c.globalAlpha = al; c.drawImage(pim, px0*W, py0*H, pw*W, ph*H); c.restore(); } }
     const pos = ghostPos(s, age), gw = s.w*s.k*W, gh = s.h*s.k*H;
     const ox = s.a[0]*W, oy = (s.a[1] + s.h/2)*H, fx = pos[0]*W, fy = (pos[1] + s.h*s.k/2)*H;
     const orx = s.w*W*.42;
@@ -824,6 +825,64 @@ ink.addEventListener('pointerup', endPointer);
 ink.addEventListener('pointercancel', () => { S.draft = null; S.draftHit = null; if (S.drag){ S.drag = null; } });
 
 /* ---------- ghost (分身) ---------- */
+// 元の選手を消す：四角のまわりを少し広めに取り、選手の形（芝ではない所）だけを周りの芝の色で埋めた「上ばり」を作る
+function erasePatch(x0, y0, w, h){
+  const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return null;
+  const ex = w * .35, ey = h * .2;
+  const rx0 = Math.max(0, x0 - ex), ry0 = Math.max(0, y0 - ey), rx1 = Math.min(1, x0 + w + ex), ry1 = Math.min(1, y0 + h + ey);
+  const sx = rx0 * vw, sy = ry0 * vh, sw = (rx1 - rx0) * vw, sh = (ry1 - ry0) * vh;
+  const sc = Math.min(1, 240 / Math.max(sw, sh)), ow = Math.max(8, Math.round(sw * sc)), oh = Math.max(8, Math.round(sh * sc));
+  const cv = document.createElement('canvas'); cv.width = ow; cv.height = oh; const c = cv.getContext('2d', { willReadFrequently:true });
+  let img; try { c.drawImage(video, sx, sy, sw, sh, 0, 0, ow, oh); img = c.getImageData(0, 0, ow, oh); } catch(e){ return null; }
+  const d = img.data, n = ow * oh;
+  // 内側の四角の中で芝ではない所
+  const ix0 = Math.floor((x0 - rx0) / (rx1 - rx0) * ow), iy0 = Math.floor((y0 - ry0) / (ry1 - ry0) * oh);
+  const ix1 = Math.ceil((x0 + w - rx0) / (rx1 - rx0) * ow), iy1 = Math.ceil((y0 + h - ry0) / (ry1 - ry0) * oh);
+  let A = new Uint8Array(n), B = new Uint8Array(n);
+  for (let y = iy0; y < iy1; y++) for (let x = ix0; x < ix1; x++){ if (x < 0 || y < 0 || x >= ow || y >= oh) continue; const o = (y*ow + x)*4; A[y*ow + x] = turfPx(d[o], d[o+1], d[o+2]) ? 0 : 1; }
+  const pass = (src, dst, er, horiz) => { const st = horiz ? 1 : ow;
+    for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++){ const i = y*ow + x, lo = horiz ? x > 0 : y > 0, hi = horiz ? x < ow-1 : y < oh-1, v0 = src[i], v1 = lo ? src[i-st] : v0, v2 = hi ? src[i+st] : v0; dst[i] = er ? (v0 & v1 & v2) : (v0 | v1 | v2); } };
+  // 細い白線は残す（収縮→膨張）、そのあと輪郭を2回り広げて、選手のふちが残らないようにする
+  pass(A, B, true, true); pass(B, A, true, false); pass(A, B, false, true); pass(B, A, false, false);
+  for (let k = 0; k < 2; k++){ pass(A, B, false, true); pass(B, A, false, false); }
+  let cnt = 0; for (let i = 0; i < n; i++) cnt += A[i];
+  if (cnt < 4) return null;
+  // 埋める：横と縦それぞれ、一番近い芝の色をつないで、距離で重み付けして混ぜる
+  const R = new Float32Array(n), G = new Float32Array(n), Bc = new Float32Array(n);
+  for (let i = 0; i < n; i++){ R[i] = d[i*4]; G[i] = d[i*4+1]; Bc[i] = d[i*4+2]; }
+  for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++){
+    const i = y*ow + x; if (!A[i]) continue;
+    let acc = [0,0,0], wt = 0;
+    const tryDir = (dx, dy) => { let xx = x, yy = y, k = 0; while (true){ xx += dx; yy += dy; k++; if (xx < 0 || yy < 0 || xx >= ow || yy >= oh) return null; const j = yy*ow + xx; if (!A[j]) return [j, k]; } };
+    for (const [a1, a2] of [[[-1,0],[1,0]], [[0,-1],[0,1]]]){
+      const p = tryDir(...a1), q = tryDir(...a2);
+      for (const hit of [p, q]) if (hit){ const [j, k] = hit, wv = 1 / k; acc[0] += d[j*4]*wv; acc[1] += d[j*4+1]*wv; acc[2] += d[j*4+2]*wv; wt += wv; }
+    }
+    if (wt){ R[i] = acc[0]/wt; G[i] = acc[1]/wt; Bc[i] = acc[2]/wt; }
+  }
+  // すじを消すために少しならし、芝らしいざらつきを少し足す
+  for (let it = 0; it < 12; it++) for (let y = 1; y < oh-1; y++) for (let x = 1; x < ow-1; x++){ const i = y*ow + x; if (!A[i]) continue;
+    R[i] = (R[i-1] + R[i+1] + R[i-ow] + R[i+ow]) / 4; G[i] = (G[i-1] + G[i+1] + G[i-ow] + G[i+ow]) / 4; Bc[i] = (Bc[i-1] + Bc[i+1] + Bc[i-ow] + Bc[i+ow]) / 4; }
+  for (let i = 0; i < n; i++){
+    if (!A[i]){ d[i*4+3] = 0; continue; }
+    const nz = (Math.random() - .5) * 10, x = i % ow, y = (i / ow) | 0;
+    const edge = (x > 0 && !A[i-1]) || (x < ow-1 && !A[i+1]) || (y > 0 && !A[i-ow]) || (y < oh-1 && !A[i+ow]);
+    d[i*4] = clamp(R[i] + nz, 0, 255); d[i*4+1] = clamp(G[i] + nz, 0, 255); d[i*4+2] = clamp(Bc[i] + nz, 0, 255); d[i*4+3] = edge ? 170 : 255;
+  }
+  c.putImageData(img, 0, 0);
+  let url; try { url = cv.toDataURL('image/png'); } catch(e){ return null; }
+  return { url, r:[rx0, ry0, rx1 - rx0, ry1 - ry0] };
+}
+async function setGhostErase(m, s, on){
+  if (on && !s.patch){
+    S.src.pause(); clearHold();
+    if (Math.abs(video.currentTime - m.t) > .04) await seekTo(m.t);
+    const bx = s.a[0] - s.w/2, by = s.a[1] - s.h/2, pt = erasePatch(bx, by, s.w, s.h);
+    if (!pt){ toast('元の選手を消せませんでした（芝の上の選手を四角で囲んでください）'); return; }
+    s.patch = pt;
+  }
+  snapshot(); if (on) s.erase = true; else delete s.erase; save(); renderList();
+}
 function makeGhost(d){
   const x0 = Math.min(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), w = Math.abs(d.b[0]-d.a[0]), h = Math.abs(d.b[1]-d.a[1]);
   if (w < .01 || h < .02){ toast('動かしたい選手を四角でしっかり囲んでください'); return; }
@@ -840,6 +899,7 @@ function makeGhost(d){
   let url; try { url = cv.toDataURL('image/webp', .82); if (!url.startsWith('data:image/webp')) url = cv.toDataURL('image/png'); } catch(e){ toast('この動画からは切り抜けませんでした'); return; }
   const a = [x0 + w/2, y0 + h/2];
   const shape = { type:'ghost', c:S.color, img:url, w, h, k:1, a, b:[clamp(a[0] + w*1.4, .02, .98), a[1]] };
+  const pt = erasePatch(x0, y0, w, h); if (pt){ shape.patch = pt; shape.erase = true; }
   snapshot(); const m = ensureMoment(S.src.t); m.shapes.push(shape); if (m.show < 5) m.show = 5; save(); renderList();
   setTool('move'); toast('分身ができました。ドラッグして本当にいてほしかった位置へ動かしてください', 3800);
 }
@@ -1460,7 +1520,7 @@ function renderList(){
         const opL = { 1:'濃い', 0.6:'普通', 0.3:'薄い' }[s.op ?? .6] || '普通', te = trackEnd(s);
         extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       } else if (s.type === 'ghost'){
-        extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button>`;
+        extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button><button type="button" data-a="erase" aria-pressed="${!!s.erase}">元の選手：${s.erase ? '消す' : '残す'}</button>`;
       } else if (s.type === 'zoom'){
         extra = `<button type="button" data-a="zk">倍率：${s.k || 2}倍</button>`;
       }
@@ -1488,6 +1548,7 @@ function renderList(){
         if (q('clear')) q('clear').onclick = () => { snapshot(); delete s.track; save(); renderList(); };
       }
       if (s.type === 'zoom') q('zk').onclick = () => { snapshot(); const z = [1.5, 2, 3], i = z.indexOf(s.k || 2); s.k = z[(i + 1) % z.length]; save(); renderList(); };
+      if (s.type === 'ghost') q('erase').onclick = () => setGhostErase(m, s, !s.erase);
       if (s.type === 'ghost') q('replay').onclick = () => { S.src.pause(); seek(m.t); S.enter.delete(m.id); };
       if (s.type === 'ghost' || s.type === 'ring'){
         const lb = q('label');
