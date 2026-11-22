@@ -1152,7 +1152,7 @@ function renderTlBar(){
   else if (S.selKind === 'f'){ const m = S.sel; name = '❄ フリーズ'; range = `${m.pause.toFixed(1)}秒`; acts = '<button type="button" data-a="f-">−0.5秒</button><button type="button" data-a="f+">＋0.5秒</button><button type="button" class="del" data-a="delf">削除</button>'; }
   else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
   if (name) h += `<div class="tl2-row"><span class="selname"></span><span class="rng">${range}</span>${acts}<button type="button" data-a="x">選択解除</button></div>`;
-  else h += '<div class="tl2-row tl2-help">タップで選択 → 両端のつまみで長さを変更</div>';
+  else h += '<div class="tl2-row tl2-help">白い線をドラッグで動画を動かす・バーをタップで選択</div>';
   bar.innerHTML = h; const sn = bar.querySelector('.selname'); if (sn) sn.textContent = name;
   const nm = bar.querySelector('input.nm'), it = selItem();
   if (nm && it){ nm.value = it.s.label || '';
@@ -1218,7 +1218,12 @@ $('#tl2Inner').addEventListener('pointerdown', e => {
   if (!S.src || S.tracking || S.exporting) return;
   const el = e.target.closest('.tl2-b,.tl2-clip,.tl2-frz');
   const base = { x:e.clientX, y:e.clientY, moved:false };
-  if (!el){ tlDrag = { ...base, kind:'seek' }; return; }
+  // 再生位置の線（つまみ）や目盛りをドラッグすると、指に合わせて動画が動く
+  if (e.target.closest('.tl2-grip,.tl2-ruler')){
+    e.preventDefault(); $('#tl2Inner').setPointerCapture(e.pointerId); S.src.pause(); clearHold();
+    tlDrag = { ...base, mode:'scrub' }; seekOut(tlX(e)); tlHead(); return;
+  }
+  if (!el){ tlDrag = { ...base, mode:'seek' }; return; }
   let type, key, kind, it = null, g = null;
   if (el.classList.contains('tl2-b')){ it = tlList[+el.dataset.i]; if (!it) return; type = 'bar'; key = it.key; kind = it.kind; }
   else { g = TL.segs[+el.dataset.g]; if (!g) return; type = g.kind === 'clip' ? 'clip' : 'frz'; key = g.kind === 'clip' ? g.c : g.m; kind = g.kind === 'clip' ? 'clip' : 'f'; }
@@ -1233,6 +1238,12 @@ $('#tl2Inner').addEventListener('pointerdown', e => {
 });
 $('#tl2Inner').addEventListener('pointermove', e => {
   const D = tlDrag; if (!D || D.mode === 'pick' || D.mode === 'tap' || D.mode === 'seek') return;
+  if (D.mode === 'scrub'){
+    D.moved = true; const x = tlX(e); seekOut(x); tlHead();
+    const sc = $('#tl2Scroll'), r = sc.getBoundingClientRect();   // 端に来たら自動でスクロール
+    if (e.clientX > r.right - 24) sc.scrollLeft += 12; else if (e.clientX < r.left + 24) sc.scrollLeft -= 12;
+    return;
+  }
   const dx = e.clientX - D.x; if (!D.moved && Math.abs(dx) < 3) return;
   if (!D.moved){ D.moved = true; snapshot(); if (D.type === 'clip') ensureClips(); }
   const dt = dx / S.pps;
@@ -1254,6 +1265,7 @@ $('#tl2Inner').addEventListener('pointermove', e => {
 function tlUp(e){
   const D = tlDrag; tlDrag = null; if (!D) return;
   const tap = Math.hypot(e.clientX - D.x, e.clientY - D.y) < 8;
+  if (D.mode === 'scrub'){ renderTracks(); return; }
   if (D.mode === 'seek'){ if (tap){ S.src.pause(); seekOut(tlX(e)); select(null); renderTracks(); } return; }
   if (D.mode === 'pick' || D.mode === 'tap'){
     if (!tap) return;
