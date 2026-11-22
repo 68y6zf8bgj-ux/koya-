@@ -214,8 +214,9 @@ function loop(now){
     if (!s.paused && !S.tracking){
       const prev = S.lastT;
       if (cur > prev && cur - prev < 1.5){
-        const clean = fxHidden();   // 「図形なし」の部分では押すまで停止を飛ばす（フリーズは残す）
-        const m = S.moments.find(m => m.id !== S.skipId && m.pause !== 0 && !(clean && m.pause < 0) && m.t > prev && m.t <= cur + 0.001);
+        // 「図形なし」の部分では押すまで停止を、「フリーズなし」の部分ではフリーズを飛ばす
+        const fl = curFlag();
+        const m = S.moments.find(m => m.id !== S.skipId && m.pause !== 0 && !((fl & NOFX) && m.pause < 0) && !((fl & NOFRZ) && m.pause > 0) && m.t > prev && m.t <= cur + 0.001);
         if (m) hold(m);
       }
     }
@@ -991,7 +992,12 @@ function curCi(){
   if (c && t >= c[0] - .05 && t <= c[1] + .3) return S.ci;
   return cs.findIndex(c => t >= c[0] - 1e-3 && t < c[1] - 1e-3);
 }
-const fxHidden = () => { if (!S.clips || !S.src) return false; const i = curCi(); return i >= 0 && !!S.clips[i][2]; };
+// 動画の部分の印（3つ目の数字）：1 = 図形なし、2 = フリーズなし、3 = 両方なし（手を加えていない映像）
+const NOFX = 1, NOFRZ = 2;
+const clipFlag = c => (c && c[2]) | 0;
+function setFlag(c, bit, on){ const v = on ? (clipFlag(c) | bit) : (clipFlag(c) & ~bit); if (v) c[2] = v; else c.length = 2; }
+const curFlag = () => { if (!S.clips || !S.src) return 0; const i = curCi(); return i >= 0 ? clipFlag(S.clips[i]) : 0; };
+const fxHidden = () => !!(curFlag() & NOFX);
 function freezeList(){ return S.moments.filter(m => m.pause > 0 && clipsOf().some(c => inClip(m.t, c))).sort((a, b) => a.t - b.t); }
 let TL = { segs:[], dur:0 };
 function buildTL(){
@@ -999,7 +1005,7 @@ function buildTL(){
   clipsOf().forEach((c, ci) => {
     const seg = { kind:'clip', c, ci, o, a:c[0], b:c[1], fz:[] }; segs.push(seg);
     let x = c[0];
-    for (const m of fz) if (inClip(m.t, c)){ const t = Math.max(m.t, x); o += t - x; x = t; const f = { kind:'f', m, t, dur:m.pause, o, ci }; segs.push(f); seg.fz.push(f); o += m.pause; }
+    for (const m of fz) if (!(clipFlag(c) & NOFRZ) && inClip(m.t, c)){ const t = Math.max(m.t, x); o += t - x; x = t; const f = { kind:'f', m, t, dur:m.pause, o, ci }; segs.push(f); seg.fz.push(f); o += m.pause; }
     o += c[1] - x; seg.end = o;
   });
   TL = { segs, dur:o };
@@ -1047,7 +1053,7 @@ function tlItems(){
   // 動画の部分ごとに置く（複製した部分には同じ図形がもう一度並ぶ。「図形なし」の部分には並べない）
   const res = [];
   for (const g of TL.segs){
-    if (g.kind !== 'clip' || g.c[2]) continue;
+    if (g.kind !== 'clip' || (clipFlag(g.c) & NOFX)) continue;
     for (const it of out) if (it.start < g.b && it.end > g.a){
       const x0 = srcToOutSeg(Math.max(it.start, g.a), g), x1 = Math.max(srcToOutSeg(Math.min(it.end, g.b), g), x0 + .05);
       res.push({ ...it, x0, x1, ci:g.ci });
@@ -1118,7 +1124,9 @@ function renderTracks(){
   TL.segs.forEach((g, gi) => {
     const el = document.createElement('div'); el.dataset.g = gi;
     if (g.kind === 'clip'){
-      el.className = 'tl2-clip' + (S.sel === g.c && S.selKind === 'clip' ? ' sel' : '') + (g.c[2] ? ' nofx' : '');
+      const fl = clipFlag(g.c);
+      el.className = 'tl2-clip' + (S.sel === g.c && S.selKind === 'clip' ? ' sel' : '') + (fl ? ' nofx' : '');
+      if (fl) el.dataset.tag = fl === 3 ? '素の映像' : fl === 1 ? '図形なし' : 'フリーズなし';
       const w = (g.end - g.o) * pps; el.style.left = g.o * pps + 'px'; el.style.width = Math.max(6, w) + 'px';
       const n = Math.min(300, Math.ceil(w / tw)), sw = n ? w / n : tw; let hh = '';
       for (let i = 0; i < n; i++){ const t = outToSrc(g.o + (i + .5) * sw / pps), k = Math.round(t / TH.step), im = TH.imgs.get(k);
@@ -1148,7 +1156,7 @@ function renderTlBar(){
   const bar = $('#tl2Bar');
   let h = '<div class="tl2-row"><span class="tl2-title">タイムライン</span><button type="button" data-a="split" title="今の位置で動画を2つに分ける">✂ 分割</button><button type="button" data-a="dup" title="選んだ部分（または今の位置の部分）をすぐ後ろにもう一度入れる">⧉ 複製</button><button type="button" data-a="freeze" class="frzb" title="今の位置に3秒のフリーズ（静止画）を入れる">❄ フリーズ</button><span class="sp"></span><span style="display:flex;gap:4px"><button type="button" class="z" data-z="-1" title="縮小">−</button><button type="button" class="z" data-z="1" title="拡大">＋</button></span></div>';
   let name = '', range = '', acts = '';
-  if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = `<button type="button" data-a="split">ここで分割</button><button type="button" data-a="dup">複製</button><button type="button" data-a="fx" aria-pressed="${!c[2]}">図形：${c[2] ? 'なし' : 'あり'}</button><button type="button" class="del" data-a="delclip">この部分を削除</button>`; }
+  if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = `<button type="button" data-a="split">ここで分割</button><button type="button" data-a="dup">複製</button><button type="button" data-a="raw" title="図形もフリーズも入れていない元の映像のまま、すぐ後ろにもう一度入れる">素の映像で複製</button><button type="button" data-a="fx" aria-pressed="${!(clipFlag(c) & NOFX)}">図形：${clipFlag(c) & NOFX ? 'なし' : 'あり'}</button><button type="button" data-a="frz" aria-pressed="${!(clipFlag(c) & NOFRZ)}">フリーズ：${clipFlag(c) & NOFRZ ? 'なし' : 'あり'}</button><button type="button" class="del" data-a="delclip">この部分を削除</button>`; }
   else if (S.selKind === 'f'){ const m = S.sel; name = '❄ フリーズ'; range = `${m.pause.toFixed(1)}秒`; acts = '<button type="button" data-a="f-">−0.5秒</button><button type="button" data-a="f+">＋0.5秒</button><button type="button" class="del" data-a="delf">削除</button>'; }
   else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
   if (name) h += `<div class="tl2-row"><span class="selname"></span><span class="rng">${range}</span>${acts}<button type="button" data-a="x">選択解除</button></div>`;
@@ -1165,11 +1173,12 @@ function splitAt(t){
   if (i < 0){ toast('動画の端に近すぎるか、削除した部分です。少し動かしてから押してください'); return false; }
   snapshot(); const c = cs[i]; cs.splice(i, 1, [c[0], t, ...c.slice(2)], [t, c[1], ...c.slice(2)]); select(cs[i + 1], 'clip'); save(); renderList(); toast('分割しました。いらない部分を選んで「この部分を削除」で消せます', 3200); return true;
 }
-function dupClip(){
+function dupClip(raw){
   const cs = ensureClips(); let i = S.selKind === 'clip' ? cs.indexOf(S.sel) : curCi();
   if (i < 0){ toast('複製したい動画の部分を選ぶか、その部分に再生位置を合わせてください'); return; }
-  snapshot(); const cp = cs[i].slice(); cs.splice(i + 1, 0, cp); select(cp, 'clip'); save(); renderList();
-  toast('すぐ後ろに複製しました。「図形：なし」にすると、その部分だけ図形を出さずに流せます', 3600);
+  snapshot(); const cp = cs[i].slice(0, 2); if (raw) cp[2] = NOFX | NOFRZ; else if (cs[i][2]) cp[2] = cs[i][2];
+  cs.splice(i + 1, 0, cp); select(cp, 'clip'); save(); renderList();
+  toast(raw ? '図形もフリーズもない元の映像を、すぐ後ろに入れました' : 'すぐ後ろに複製しました。「図形：なし」「フリーズ：なし」でその部分だけ外せます', 3600);
 }
 function addFreeze(t){
   if (!clipAt(t)){ toast('削除した部分にはフリーズを入れられません'); return; }
@@ -1186,7 +1195,8 @@ $('#tl2Bar').addEventListener('click', e => {
   if (a === 'split'){ S.src.pause(); splitAt(now); return; }
   if (a === 'freeze'){ S.src.pause(); clearHold(); addFreeze(now); return; }
   if (a === 'dup'){ S.src.pause(); clearHold(); dupClip(); return; }
-  if (a === 'fx'){ const c = S.sel; if (!c) return; snapshot(); if (c[2]) c.length = 2; else c[2] = 1; save(); renderList(); return; }
+  if (a === 'fx' || a === 'frz'){ const c = S.sel; if (!c) return; const bit = a === 'fx' ? NOFX : NOFRZ; snapshot(); setFlag(c, bit, !(clipFlag(c) & bit)); save(); renderList(); return; }
+  if (a === 'raw'){ S.src.pause(); clearHold(); dupClip(true); return; }
   if (a === 'delclip'){
     const cs = ensureClips(); if (cs.length <= 1){ toast('全部は削除できません。先に「分割」してから、いらない部分を削除してください', 3600); return; }
     snapshot(); cs.splice(cs.indexOf(S.sel), 1); select(null); save(); renderList(); toast('削除しました（元に戻すで戻せます）'); return;
