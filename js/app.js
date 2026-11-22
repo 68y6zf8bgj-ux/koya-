@@ -180,11 +180,13 @@ function ghostPos(s, age){ const p = ease(clamp(age / 900, 0, 1)); return [s.a[0
 /* ---------- playback ---------- */
 function clearHold(){ S.holdId = null; S.holdUntil = null; }
 function hold(m){
-  const s = S.src; s.pause(); s.t = m.t; S.lastT = m.t; S.skipId = m.id; S.holdId = m.id;
+  // 行き過ぎが少しなら戻さずにそのコマで止める（戻すとカクッとするため）
+  const s = S.src; s.pause(); if (Math.abs(s.t - m.t) > .12) s.t = m.t; S.lastT = s.t; S.skipId = m.id; S.holdId = m.id;
   const ex = S.exporting, sec = m.pause > 0 ? m.pause : (ex ? ex.holdSec : 0);
   S.holdUntil = sec > 0 && (ex || !$('#noAuto').checked) ? performance.now() + sec * 1000 : null;
   S.holdTotal = sec * 1000;
-  const fl = $('#flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go');
+  // フリーズ（自動で再開する停止）と書き出し中はフラッシュしない
+  if (!ex && !S.holdUntil){ const fl = $('#flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); }
 }
 function togglePlay(){ const s = S.src; if (!s || S.tracking) return; clearHold();
   if (s.paused && S.clips){ const L = S.clips[S.clips.length-1]; if (s.t >= L[1] - .06 || s.t < S.clips[0][0]) seek(S.clips[0][0]); }
@@ -197,7 +199,7 @@ function loop(now){
   if (s){
     if (!s.paused && !S.tracking && S.clips && !S.holdId){
       const t0 = s.t;
-      if (!clipAt(t0)){ const n = S.clips.find(c => c[0] > t0 - 1e-3); if (n){ s.t = n[0]; S.lastT = n[0] - .001; } else s.pause(); }
+      if (!clipAt(t0)){ const n = S.clips.find(c => c[0] > t0 - 1e-3); if (n){ if (S.exporting) recWait(); s.t = n[0]; S.lastT = n[0] - .001; } else s.pause(); }
     }
     const cur = s.t;
     if (!s.paused && !S.tracking){
@@ -207,7 +209,7 @@ function loop(now){
         if (m) hold(m);
       }
     }
-    if (S.holdId && S.holdUntil && now >= S.holdUntil){ S.holdId = null; S.holdUntil = null; s.play(); }
+    if (S.holdId && S.holdUntil && now >= S.holdUntil){ S.holdId = null; S.holdUntil = null; if (S.exporting) recWait(); s.play(); }
     if (S.skipId){ const sm = S.moments.find(x => x.id === S.skipId); if (!sm || Math.abs(s.t - sm.t) > 0.3) S.skipId = null; }
     S.lastT = s.t;
     drawInk(now); updateUI(now);
@@ -260,6 +262,7 @@ function glowLayer(s, x0, y0, rw, rh, lw){
   const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return null;
   const pad = Math.ceil(Math.max(8, lw*4)), key = [video.currentTime.toFixed(3), x0|0, y0|0, rw|0, rh|0, s.c].join(':');
   const so = s._o || s; let G = GLOW.get(so); if (G && G.key === key) return G;
+  if (G && G.key && !video.paused && performance.now() - (G.at || 0) < 50) return G;
   if (!G){ G = { cv:document.createElement('canvas'), m:document.createElement('canvas'), tint:document.createElement('canvas'), pad }; GLOW.set(so, G); }
   const W = ink.width, H = ink.height, mw = Math.max(12, Math.min(200, Math.round(rw / 2))), mh = Math.max(12, Math.round(mw * rh / rw));
   const sx = x0 / W * vw, sy = y0 / H * vh, sw = rw / W * vw, sh = rh / H * vh;
@@ -287,7 +290,7 @@ function glowLayer(s, x0, y0, rw, rh, lw){
   for (let k = 0; k < 3; k++) g.drawImage(tn, pad, pad, rw, rh);
   g.shadowBlur = pad*.25; for (let k = 0; k < 2; k++) g.drawImage(tn, pad, pad, rw, rh);
   g.shadowBlur = 0; g.globalCompositeOperation = 'destination-out'; g.drawImage(m, pad, pad, rw, rh); g.globalCompositeOperation = 'source-over';
-  G.key = key; return G;
+  G.key = key; G.at = performance.now(); return G;
 }
 function drawShape(s, W, H, al, t, age){
   if (s.type === 'rlabel'){ drawRingLabel(s, W, H, al, t); return; }
@@ -932,10 +935,10 @@ function updateUI(now){
   tlHead();
   if (lastPaused !== s.paused){ lastPaused = s.paused; $('#play').innerHTML = s.paused ? ICON_PLAY : ICON_PAUSE; }
   if (S.tracking) setBadge('track', '選手を追いかけ中', `${(S.tracking.t - S.tracking.t0).toFixed(1)}秒`, false, '止める', null);
-  else if (S.holdId && S.holdUntil){ const left = Math.max(0, S.holdUntil - now); setBadge('timer', '一時停止', `あと ${Math.ceil(left/1000)} 秒で再開`, true, '再開 ▶', S.holdTotal ? left / S.holdTotal : null); }
+  else if (S.holdId && S.holdUntil) setBadge('');   // フリーズ（自動で再開）は表示を出さず自然に止める
   else if (S.holdId) setBadge('hold', '一時停止中', '説明が終わったら再開', false, '再開 ▶', null);
   else setBadge('');
-  stage.classList.toggle('held', !!S.holdId && !S.tracking);
+  stage.classList.toggle('held', !!S.holdId && !S.holdUntil && !S.tracking && !S.exporting);
   stage.classList.toggle('tracking', !!S.tracking);
   const vis = S.moments.filter(m => t >= (m.ct0 ?? m.t) - 0.045 && t < (m.cuntil ?? m.t + m.show) && m.comment.trim());
   const cm = vis.length ? vis[vis.length-1] : null;
@@ -1044,6 +1047,7 @@ function startThumbs(){
     const n = Math.ceil(d / TH.step);
     for (let k = 0; k <= n; k++){
       if (TH.url !== url) break;
+      while (TH.url === url && (!video.paused || S.exporting)) await new Promise(res => setTimeout(res, 400));
       await new Promise(res => { let done = false; const fin = () => { if (done) return; done = true; v2.removeEventListener('seeked', fin); res(); }; v2.addEventListener('seeked', fin); setTimeout(fin, 1500); v2.currentTime = Math.min(d - .05, k * TH.step + .01); });
       try {
         const h = 72, w = Math.round(h * ((v2.videoWidth / v2.videoHeight) || 16/9)); cv.width = w; cv.height = h;
@@ -1670,10 +1674,23 @@ function wrapLines(c, text, maxW){
   return out;
 }
 const CAP_BG = { dark:['rgba(8,11,10,.82)','#e8eee9','#ffd23f'], white:['rgba(255,255,255,.93)','#111','#111'], yellow:['#ffd23f','#111','#111'], pink:['#ff2d78','#fff','#fff'], red:['#e5392f','#fff','#fff'], blue:['#1f7fd6','#fff','#fff'], none:[null,'#fff',null] };
+// 書き出し中、動画が実際に動き出すまで（フリーズ明け・カットの飛び先・読み込みの詰まり）は録画を一時停止して、
+// 止まったコマが余分に入って動画がカクつくのを防ぐ
+function recWait(){ const E = S.exporting; if (!E) return; E.wait = true; E.waitT = S.src.t; try { if (E.rec.state === 'recording') E.rec.pause(); } catch(e){} }
+function recCheck(held){
+  const E = S.exporting, now = performance.now(), t = S.src.t;
+  if (held){ E.wait = false; E.lastT = t; E.lastAdv = now; try { if (E.rec.state === 'paused') E.rec.resume(); } catch(e){} return; }
+  if (t !== E.lastT){
+    const moved = !E.wait || Math.abs(t - E.waitT) > 1e-3;
+    E.lastT = t; E.lastAdv = now;
+    if (moved){ E.wait = false; try { if (E.rec.state === 'paused') E.rec.resume(); } catch(e){} }
+  } else if (!video.paused && now - (E.lastAdv || now) > 90){ try { if (E.rec.state === 'recording') E.rec.pause(); } catch(e){} }
+}
 function exportTick(){
   const E = S.exporting, c = E.ctx, W = E.cv.width, H = E.cv.height, k = W / stage.getBoundingClientRect().width;
   c.drawImage(video, 0, 0, W, H);
   const held = !!S.holdId;
+  recCheck(held);
   c.drawImage(ink, 0, 0, W, H);
   const cap = $('#caption');
   if (!cap.hidden && cap.textContent){
@@ -1687,18 +1704,6 @@ function exportTick(){
     if (bar){ c.fillStyle = bar; c.fillRect(x, y, 4 * k, bh); }
     if (!bg){ c.lineWidth = fs * .22; c.strokeStyle = 'rgba(0,0,0,.85)'; lines.forEach((l, i) => c.strokeText(l, x + pad * 1.2, y + pad * .55 + lh * (i + .5))); }
     c.fillStyle = fg; lines.forEach((l, i) => c.fillText(l, x + pad * 1.2, y + pad * .55 + lh * (i + .5)));
-  }
-  if (held){
-    const b = Math.max(4, W * .005); c.strokeStyle = '#3ec9ff'; c.lineWidth = b; c.strokeRect(b / 2, b / 2, W - b, H - b);
-    const fs = Math.max(14, W * .022), px = W * .02, py = H * .03, r = fs * .8;
-    c.font = `700 ${fs}px "Noto Sans JP", sans-serif`; c.textBaseline = 'middle';
-    const tw = c.measureText('一時停止').width, bw = r * 2 + tw + fs * 1.4, bh = r * 2 + fs * .5;
-    c.fillStyle = 'rgba(8,11,10,.88)'; c.beginPath(); if (c.roundRect) c.roundRect(px, py, bw, bh, fs * .45); else c.rect(px, py, bw, bh); c.fill();
-    c.strokeStyle = '#3ec9ff'; c.lineWidth = Math.max(2, fs * .1); c.stroke();
-    const ix = px + fs * .45 + r, iy = py + bh / 2;
-    c.fillStyle = '#3ec9ff'; c.beginPath(); c.arc(ix, iy, r, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#06202b'; c.fillRect(ix - r * .38, iy - r * .42, r * .26, r * .84); c.fillRect(ix + r * .12, iy - r * .42, r * .26, r * .84);
-    c.fillStyle = '#e8eee9'; c.fillText('一時停止', ix + r + fs * .5, iy + 1);
   }
   const d = S.src.dur || 1;
   $('#exBar').style.width = (clamp(S.src.t / d, 0, 1) * 100).toFixed(1) + '%';
