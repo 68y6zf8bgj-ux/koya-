@@ -14,7 +14,7 @@
 <title>K-analyst</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500&family=Noto+Sans+JP:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="css/app.css?v=9">
+<link rel="stylesheet" href="css/app.css?v=10">
 </head>
 <body>
 
@@ -37,7 +37,6 @@
         <div class="stage" id="stage">
           <video id="video" playsinline preload="auto" hidden></video>
           <canvas id="ink" aria-label="描画エリア"></canvas>
-          <div class="modeb" id="modeb" hidden><span class="mb-dot"></span><span id="mbText"></span><button type="button" id="mbBtn"></button></div>
           <label class="drop" id="drop" for="file">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h11l5-3v16l-5-3H4z"/></svg>
             <strong>試合・練習の動画を開く</strong>
@@ -85,6 +84,7 @@
         <button class="ic" id="fs" type="button" title="全画面"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       </div>
 
+      <div class="modeb" id="modeb" hidden><span class="mb-dot"></span><span id="mbText"></span><button type="button" id="mbBtn"></button></div>
       <div class="tools" id="tools">
         <button class="tool editt" data-tool="move" type="button" title="入れた図形を動かす・形を変える"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 3l14 8-6 2-3 6z"/></svg>編集</button>
         <button class="tool" data-tool="arrow" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 20L19 5M11 5h8v8"/></svg>パス</button>
@@ -186,7 +186,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=9"></script>
+<script src="js/app.js?v=10"></script>
 
 </body>
 </html>

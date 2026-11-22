@@ -285,7 +285,7 @@ function glowLayer(s, x0, y0, rw, rh, lw){
   for (let i = 0, j = 0; i < n; i++, j += 4){
     const R = d[j], Gc = d[j+1], Bl = d[j+2], mx = Math.max(R, Gc, Bl), df = mx - Math.min(R, Gc, Bl);
     let turf = false;
-    if (mx > 25 && df > mx*.14){ let h = mx === Gc ? 60*((Bl - R)/df + 2) : mx === R ? 60*((Gc - Bl)/df) : 60*((R - Gc)/df + 4); if (h < 0) h += 360; turf = h >= 50 && h <= 175; }
+    if (mx >= 55 && df > mx*.14 && !(mx > 158 && df < mx*.25)){ let h = mx === Gc ? 60*((Bl - R)/df + 2) : mx === R ? 60*((Gc - Bl)/df) : 60*((R - Gc)/df + 4); if (h < 0) h += 360; turf = h >= 50 && h <= 175; }
     A[i] = turf ? 0 : 1;
   }
   const pass = (src, dst, er, horiz) => { const st = horiz ? 1 : mw;
@@ -538,7 +538,8 @@ function groundCtx(W, H){
 }
 // 芝の色（緑系）以外＝選手・ボールとみなしてマスクを作る。細いライン（白線）は消す
 function playerMask(){
-  const vw = video.videoWidth, vh = video.videoHeight, mw = 360, mh = Math.max(1, Math.round(mw * vh / vw));
+  // 遠くに小さく映る選手も拾えるよう、細かめ（最大 800 px）で見る
+  const vw = video.videoWidth, vh = video.videoHeight, mw = Math.min(800, vw), mh = Math.max(1, Math.round(mw * vh / vw));
   const t = video.currentTime;
   // 再生中は近いコマ（約1/20秒以内）なら前のマスクを使い回して軽くする
   if (GR.t != null && GR.mw === mw && (t === GR.t || (!video.paused && Math.abs(t - GR.t) < .05))) return GR.m;
@@ -547,29 +548,50 @@ function playerMask(){
   c.globalCompositeOperation = 'source-over'; c.drawImage(video, 0, 0, mw, mh);
   let img; try { img = c.getImageData(0, 0, mw, mh); } catch(e){ return null; }
   const d = img.data, n = mw * mh;
-  if (!GR.a || GR.a.length !== n){ GR.a = new Uint8Array(n); GR.b = new Uint8Array(n); }
-  const A = GR.a, B = GR.b;
+  if (!GR.a || GR.a.length !== n){ GR.a = new Uint8Array(n); GR.b = new Uint8Array(n); GR.hr = new Uint16Array(n); GR.vr = new Uint16Array(n); GR.d1 = new Uint16Array(n); GR.d2 = new Uint16Array(n); }
+  const A = GR.a, B = GR.b, HR = GR.hr, VR = GR.vr, D1 = GR.d1, D2 = GR.d2;
+  // 0 = 芝、1 = 選手（白以外）、2 = 白（線かもしれない）
   for (let i = 0, j = 0; i < n; i++, j += 4){
     const R = d[j], G = d[j+1], Bl = d[j+2], mx = R > G ? (R > Bl ? R : Bl) : (G > Bl ? G : Bl), mn = R < G ? (R < Bl ? R : Bl) : (G < Bl ? G : Bl), df = mx - mn;
+    // とても暗い所・ほぼ白い所は、少し緑がかっていても芝ではない（動画の圧縮で細い足やユニフォームに芝の色がにじむため）
+    const white = mx > 158 && df < mx * .25;
     let turf = false;
-    if (mx > 25 && df > mx * .14){
+    if (!white && mx >= 55 && df > mx * .14){
       let h; if (mx === G) h = 60 * ((Bl - R) / df + 2); else if (mx === R) h = 60 * ((G - Bl) / df); else h = 60 * ((R - G) / df + 4);
       if (h < 0) h += 360; turf = h >= 50 && h <= 175;
     }
-    A[i] = turf ? 0 : 1;
+    A[i] = turf ? 0 : white ? 2 : 1;
   }
-  // 3x3 の収縮→膨張→膨張（横と縦に分けて計算）。細い白線やノイズを消し、選手の輪郭を少し広げる
-  const pass = (src, dst, er, horiz) => {
-    const st = horiz ? 1 : mw;
-    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++){
-      const i = y * mw + x, lo = horiz ? x > 0 : y > 0, hi = horiz ? x < mw - 1 : y < mh - 1;
-      const v0 = src[i], v1 = lo ? src[i - st] : v0, v2 = hi ? src[i + st] : v0;
-      dst[i] = er ? (v0 & v1 & v2) : (v0 | v1 | v2);
+  // 白い所の「横の長さ」「縦の長さ」を数える
+  for (let y = 0; y < mh; y++){ let x = 0; while (x < mw){ const i0 = y*mw + x; if (A[i0] !== 2){ x++; continue; } let e = x; while (e < mw && A[y*mw + e] === 2) e++; for (let k = x; k < e; k++) HR[y*mw + k] = e - x; x = e; } }
+  for (let x = 0; x < mw; x++){ let y = 0; while (y < mh){ if (A[y*mw + x] !== 2){ y++; continue; } let e = y; while (e < mh && A[e*mw + x] === 2) e++; for (let k = y; k < e; k++) VR[k*mw + x] = e - y; y = e; } }
+  // ななめ方向（右下・左下）の長さも数える
+  const diag = (D, dx) => {
+    for (let s0 = 0; s0 < mw + mh; s0++){
+      // 始点：上の辺と左（右）の辺
+      let x = dx > 0 ? (s0 < mw ? s0 : 0) : (s0 < mw ? s0 : mw - 1), y = s0 < mw ? 0 : s0 - mw + 1;
+      if (y >= mh) continue;
+      let run = [];
+      while (x >= 0 && x < mw && y < mh){
+        const i = y*mw + x;
+        if (A[i] === 2) run.push(i); else if (run.length){ for (const k of run) D[k] = run.length; run = []; }
+        x += dx; y++;
+      }
+      if (run.length) for (const k of run) D[k] = run.length;
     }
   };
-  pass(A, B, true, true); pass(B, A, true, false);
-  pass(A, B, false, true); pass(B, A, false, false);
-  pass(A, B, false, true); pass(B, A, false, false);
+  diag(D1, 1); diag(D2, -1);
+  // 線とみなす白：どこかの向きに長く続き、かつ細い（横線・縦線・ななめ線・円の線）。
+  // それ以外の白（白いユニフォーム・ボール・ソックス）は選手
+  const L = Math.max(14, Math.round(mw * .03));
+  for (let i = 0; i < n; i++){
+    if (A[i] !== 2){ B[i] = A[i]; continue; }
+    const hr = HR[i], vr = VR[i], mxr = Math.max(hr, vr, D1[i], D2[i]);
+    B[i] = (mxr >= L && Math.min(hr, vr) <= 7) ? 0 : 1;
+  }
+  // 輪郭を1回り広げて、選手のふちに図形が残らないようにする
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++){ const i = y*mw + x;
+    A[i] = B[i] | (x > 0 ? B[i-1] : 0) | (x < mw-1 ? B[i+1] : 0) | (y > 0 ? B[i-mw] : 0) | (y < mh-1 ? B[i+mw] : 0); }
   for (let i = 0, j = 0; i < n; i++, j += 4){ d[j+3] = A[i] ? 255 : 0; }
   c.putImageData(img, 0, 0); GR.t = t; GR.mw = mw; return m;
 }
@@ -955,7 +977,7 @@ function seekTo(t){ return new Promise(res => { let done = false; const fin = ()
    一瞬隠れても予測で進み、見えたら捕まえ直す。見失ったところで止まる。 */
 const turfPx = (R, G, B) => {
   const mx = R > G ? (R > B ? R : B) : (G > B ? G : B), mn = R < G ? (R < B ? R : B) : (G < B ? G : B), df = mx - mn;
-  if (mx <= 25 || df <= mx * .14) return false;
+  if (mx < 55 || df <= mx * .14 || (mx > 158 && df < mx * .25)) return false;
   let h = mx === G ? 60 * ((B - R) / df + 2) : mx === R ? 60 * ((G - B) / df) : 60 * ((R - G) / df + 4);
   if (h < 0) h += 360; return h >= 50 && h <= 175;
 };
