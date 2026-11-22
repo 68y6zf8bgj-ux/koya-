@@ -734,7 +734,7 @@ ink.addEventListener('pointerdown', e => {
     if (!h.s.id) h.s.id = uid();
     const ref = [h.m.id, h.s.id];
     if (!S.linkFrom){ S.linkFrom = ref; S.hover = p; if (made){ save(); renderList(); } toast('次の場所（または選手マーク）をタップ。終わるときは最後の丸をもう一度タップ'); return; }
-    if (S.linkFrom[1] === ref[1]){ S.linkFrom = null; toast('つなぐのを終わりました'); return; }
+    if (S.linkFrom[1] === ref[1]){ S.linkFrom = null; toast('つなぐのを終わりました。選手について動かすときは、線を選んで「つながりを全部追いかける」', 4500); return; }
     if (!made) snapshot();
     ensureMoment(S.src.t).shapes.push({ type:'link', c:S.color, from:S.linkFrom, to:ref });
     S.linkFrom = ref; save(); renderList(); return;
@@ -1003,14 +1003,8 @@ function retrack(m, s){
   const t = S.src.t; if (t < m.t - .05){ toast('この図形が出てくる位置より後ろで押してください'); return; }
   autoTrack(m, s, Math.max(t, m.t));
 }
-async function autoTrack(m, s, fromT){
-  if (!S.src || S.tracking) return;
-  S.src.pause(); clearHold();
-  const vw = video.videoWidth, vh = video.videoHeight, cw = 640, ch = Math.round(vh * cw / vw);
-  const oc = document.createElement('canvas'); oc.width = cw; oc.height = ch; const oc2 = oc.getContext('2d', { willReadFrequently:true });
-  const grab = () => { oc2.drawImage(video, 0, 0, cw, ch); return oc2.getImageData(0, 0, cw, ch).data; };
-  const t0 = fromT != null ? fromT : m.t; await seekTo(t0);
-  let frame; try { frame = grab(); } catch(e){ toast('この動画では自動追跡が使えません'); return; }
+// 1人分の追跡（その場面の最初のコマから、体の形と動きを覚えて追う）
+function makeTarget(s, t0, fromT, frame, cw, ch){
   const tr = TRACKABLE.has(s.type);
   const start = (s.track && s.track.length) ? ringCenter(s, t0) : (tr ? anchorOf(s) : s.a);
   const A = [start[0] * cw, start[1] * ch];
@@ -1052,12 +1046,10 @@ async function autoTrack(m, s, fromT){
   if (fromT != null && s.track) s.track = s.track.filter(k => k[0] < t0 - 1e-3); else s.track = [];
   const put = t => setKey(s, t, [clamp((px + bw/2 + off[0]) / cw, 0, 1), clamp((py + bh + off[1]) / ch, 0, 1)]);
   put(t0);
-  S.tracking = { stop:false, s, t0, t:t0 };
-  const MAXLOST = 1.0, MAXLEN = 180;
-  const onFrame = t => {
+  const MAXLOST = 1.0;
+  const step = (data, t) => {
     const dt = t - lastT; if (dt <= 1e-4) return true;
     if (dt > .5){ lostSince = lostSince ?? lastT; }
-    const data = grab();
     // 予測した位置を中心に探す
     const qx = px + vx * dt, qy = py + vy * dt;
     // 探す範囲：ふだんは予測のすぐ近くだけ。隠れている時間が長いほど広げる（遠くの似た選手に飛び移らないため）
@@ -1086,8 +1078,37 @@ async function autoTrack(m, s, fromT){
       lostSince = lostSince ?? t; px = qx; py = qy; vx *= .9; vy *= .9;
       if (t - lostSince > MAXLOST) return false;
     }
-    put(t); lastT = t; n++; S.tracking.t = t;
-    return !S.tracking.stop && t < video.duration - .05 && t - t0 < MAXLEN;
+    put(t); lastT = t; n++;
+    return true;
+  };
+  const finish = () => {
+    // 見失ったあとに予測で置いた分は消す
+    const lost = lostSince != null;
+    if (lost) s.track = s.track.filter(k => k[0] <= lastGood + 1e-3);
+    // 細かいぶれをならす
+    const ks = s.track; for (let pass = 0; pass < 2; pass++) for (let i = 1; i < ks.length - 1; i++){ if (ks[i][0] < t0) continue; ks[i][1] = (ks[i-1][1] + ks[i][1]*2 + ks[i+1][1]) / 4; ks[i][2] = (ks[i-1][2] + ks[i][2]*2 + ks[i+1][2]) / 4; }
+    return { lost, secs:lastGood - t0 };
+  };
+  return { s, step, finish, alive:true };
+}
+// 何人でも同じ再生の中で一度に追いかける
+async function autoTrackMany(list, fromT){
+  if (!S.src || S.tracking || !list.length) return;
+  S.src.pause(); clearHold();
+  const vw = video.videoWidth, vh = video.videoHeight, cw = 640, ch = Math.round(vh * cw / vw);
+  const oc = document.createElement('canvas'); oc.width = cw; oc.height = ch; const oc2 = oc.getContext('2d', { willReadFrequently:true });
+  const grab = () => { oc2.drawImage(video, 0, 0, cw, ch); return oc2.getImageData(0, 0, cw, ch).data; };
+  const t0 = fromT != null ? fromT : Math.min(...list.map(([m]) => m.t)); await seekTo(t0);
+  let frame; try { frame = grab(); } catch(e){ toast('この動画では自動追跡が使えません'); return; }
+  const tg = list.map(([m, s]) => makeTarget(s, t0, fromT, frame, cw, ch));
+  S.tracking = { stop:false, s:list[0][1], t0, t:t0 };
+  const MAXLEN = 180;
+  const onFrame = t => {
+    const live = tg.filter(x => x.alive); if (!live.length) return false;
+    const data = grab();
+    for (const x of live) x.alive = x.step(data, t);
+    S.tracking.t = t;
+    return tg.some(x => x.alive) && !S.tracking.stop && t < video.duration - .05 && t - t0 < MAXLEN;
   };
   // 動画を 0.5 倍速で流しながら、コマが来るたびに追いかける（使えない環境では 1/15 秒ずつ進める）
   if (video.requestVideoFrameCallback){
@@ -1103,16 +1124,28 @@ async function autoTrack(m, s, fromT){
     let t = t0;
     while (!S.tracking.stop && t + 1/15 <= video.duration){ t += 1/15; await seekTo(t); if (!onFrame(t)) break; }
   }
-  // 見失ったあとに予測で置いた分は消す
-  const lost = lostSince != null;
-  if (lost) s.track = s.track.filter(k => k[0] <= lastGood + 1e-3);
-  // 細かいぶれをならす
-  const ks = s.track; for (let pass = 0; pass < 2; pass++) for (let i = 1; i < ks.length - 1; i++){ if (ks[i][0] < t0) continue; ks[i][1] = (ks[i-1][1] + ks[i][1]*2 + ks[i+1][1]) / 4; ks[i][2] = (ks[i-1][2] + ks[i][2]*2 + ks[i+1][2]) / 4; }
-  const stopped = S.tracking.stop, secs = (lastGood - t0).toFixed(1);
+  const res = tg.map(x => x.finish());
+  const stopped = S.tracking.stop;
   S.tracking = null; save(); renderList(); seek(t0);
-  toast(lost ? `${secs}秒まで追いかけました。見失ったところでマークを正しい位置に動かし「ここから追いかけ直す」を押すと続きを追えます` : stopped ? `${secs}秒分を追いかけて止めました` : `${secs}秒分を追いかけました`, 6000);
+  const lostN = res.filter(r => r.lost).length, secs = Math.max(...res.map(r => r.secs)).toFixed(1);
+  if (tg.length === 1) toast(lostN ? `${res[0].secs.toFixed(1)}秒まで追いかけました。見失ったところでマークを正しい位置に動かし「ここから追いかけ直す」を押すと続きを追えます` : stopped ? `${secs}秒分を追いかけて止めました` : `${secs}秒分を追いかけました`, 6000);
+  else toast(lostN ? `${tg.length}人を追いかけました（${lostN}人は途中で見失いました。その丸を正しい位置に動かして「ここから追いかけ直す」で続きを追えます）` : `${tg.length}人を${secs}秒分 追いかけました`, 6000);
 }
-
+const autoTrack = (m, s, fromT) => autoTrackMany([[m, s]], fromT);
+// つなぐ線でつながっている丸（選手マーク）を全部集める
+function chainRings(start){
+  const all = S.moments.flatMap(m => m.shapes.map(s => [m, s])), links = all.filter(([, s]) => s.type === 'link');
+  const ids = new Set(), q = start.type === 'link' ? [start.from[1], start.to[1]] : start.id ? [start.id] : [];
+  while (q.length){ const id = q.pop(); if (ids.has(id)) continue; ids.add(id); for (const [, l] of links){ if (l.from[1] === id) q.push(l.to[1]); if (l.to[1] === id) q.push(l.from[1]); } }
+  return all.filter(([, s]) => s.type === 'ring' && ids.has(s.id));
+}
+const hasChain = s => s.type === 'link' || (s.type === 'ring' && s.id && S.moments.some(m => m.shapes.some(l => l.type === 'link' && (l.from[1] === s.id || l.to[1] === s.id))));
+function trackChain(s, here){
+  const list = chainRings(s); if (!list.length){ toast('つながっている丸が見つかりません'); return; }
+  snapshot();
+  if (here){ const t = S.src.t, t0 = Math.min(...list.map(([m]) => m.t)); if (t < t0 - .05){ toast('丸が出てくる位置より後ろで押してください'); return; } autoTrackMany(list, Math.max(t, t0)); }
+  else autoTrackMany(list);
+}
 /* ---------- UI ---------- */
 const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
@@ -1351,7 +1384,7 @@ function renderTlBar(){
   let name = '', range = '', acts = '';
   if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = `<button type="button" data-a="split">ここで分割</button><button type="button" data-a="dup">複製</button><button type="button" data-a="raw" title="図形もフリーズも入れていない元の映像のまま、すぐ後ろにもう一度入れる">素の映像で複製</button><button type="button" data-a="fx" aria-pressed="${!(clipFlag(c) & NOFX)}">図形：${clipFlag(c) & NOFX ? 'なし' : 'あり'}</button><button type="button" data-a="frz" aria-pressed="${!(clipFlag(c) & NOFRZ)}">フリーズ：${clipFlag(c) & NOFRZ ? 'なし' : 'あり'}</button><button type="button" class="del" data-a="delclip">この部分を削除</button>`; }
   else if (S.selKind === 'f'){ const m = S.sel; name = '❄ フリーズ'; range = `${m.pause.toFixed(1)}秒`; acts = '<button type="button" data-a="f-">−0.5秒</button><button type="button" data-a="f+">＋0.5秒</button><button type="button" class="del" data-a="delf">削除</button>'; }
-  else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + (it.s && (it.s.type === 'ring' || TRACKABLE.has(it.s.type)) ? '<button type="button" data-a="trk">追いかける</button>' + (trackEnd(it.s) > 0 ? '<button type="button" data-a="retrk">ここから追いかけ直す</button>' : '') : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
+  else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + (it.s && hasChain(it.s) ? '<button type="button" data-a="trkall">つながりを全部追いかける</button>' + (chainRings(it.s).some(([, r]) => trackEnd(r) > 0) ? '<button type="button" data-a="trkall2">ここから全部追いかけ直す</button>' : '') : '') + (it.s && (it.s.type === 'ring' || TRACKABLE.has(it.s.type)) ? '<button type="button" data-a="trk">追いかける</button>' + (trackEnd(it.s) > 0 ? '<button type="button" data-a="retrk">ここから追いかけ直す</button>' : '') : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
   if (name) h += `<div class="tl2-row"><span class="selname"></span><span class="rng">${range}</span>${acts}<button type="button" data-a="x">選択解除</button></div>`;
   else h += '<div class="tl2-row tl2-help">白い線をドラッグで動画を動かす・バーをタップで選択</div>';
   bar.innerHTML = h; const sn = bar.querySelector('.selname'); if (sn) sn.textContent = name;
@@ -1401,6 +1434,8 @@ $('#tl2Bar').addEventListener('click', e => {
     select(null); save(); renderList(); return;
   }
   const it = selItem(); if (!it) return;
+  if (a === 'trkall'){ trackChain(it.s, false); return; }
+  if (a === 'trkall2'){ trackChain(it.s, true); return; }
   if (a === 'trk'){ snapshot(); autoTrack(it.m, it.s); return; }
   if (a === 'retrk'){ snapshot(); retrack(it.m, it.s); return; }
   if (a === 'del'){
@@ -1564,6 +1599,8 @@ function renderList(){
         extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button><button type="button" data-a="erase" aria-pressed="${!!s.erase}">元の選手：${s.erase ? '消す' : '残す'}</button>`;
       } else if (s.type === 'zoom'){
         extra = `<button type="button" data-a="zk">倍率：${s.k || 2}倍</button>`;
+      } else if (s.type === 'link'){
+        extra = `<button type="button" data-a="trkall">つながりを全部追いかける</button>`;
       }
       if (TRACKABLE.has(s.type)) extra += `<button type="button" data-a="track">自動で追いかける</button>${trackEnd(s) > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       const te = s.type === 'ring' || TRACKABLE.has(s.type) ? trackEnd(s) : -1;
@@ -1588,6 +1625,7 @@ function renderList(){
         if (q('retrack')) q('retrack').onclick = () => { snapshot(); retrack(m, s); };
         if (q('clear')) q('clear').onclick = () => { snapshot(); delete s.track; save(); renderList(); };
       }
+      if (s.type === 'link') q('trkall').onclick = () => trackChain(s, false);
       if (s.type === 'zoom') q('zk').onclick = () => { snapshot(); const z = [1.5, 2, 3], i = z.indexOf(s.k || 2); s.k = z[(i + 1) % z.length]; save(); renderList(); };
       if (s.type === 'ghost') q('erase').onclick = () => setGhostErase(m, s, !s.erase);
       if (s.type === 'ghost') q('replay').onclick = () => { S.src.pause(); seek(m.t); S.enter.delete(m.id); };
