@@ -189,23 +189,33 @@ function hold(m){
   if (!ex && !S.holdUntil){ const fl = $('#flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); }
 }
 function togglePlay(){ const s = S.src; if (!s || S.tracking) return; clearHold();
-  if (s.paused && S.clips){ const L = S.clips[S.clips.length-1]; if (s.t >= L[1] - .06 || s.t < S.clips[0][0]) seek(S.clips[0][0]); }
+  if (s.paused && S.clips){ const L = S.clips[S.clips.length-1], ci = curCi(); if (ci < 0 || (ci === S.clips.length - 1 && s.t >= L[1] - .06)){ seek(S.clips[0][0]); S.ci = 0; } }
   if (s.paused) s.play(); else s.pause(); }
-function seek(t){ const s = S.src; if (!s) return; clearHold(); s.t = clamp(t, 0, s.dur || t); S.lastT = s.t; const m = momentAt(s.t); S.skipId = m ? m.id : null; }
+function seek(t){ const s = S.src; if (!s) return; clearHold(); s.t = clamp(t, 0, s.dur || t); S.lastT = s.t; const m = momentAt(s.t); S.skipId = m ? m.id : null;
+  if (S.clips){ const c = S.clips[S.ci], x = s.t; if (!(c && x >= c[0] - 1e-3 && x <= c[1] + 1e-3)) S.ci = Math.max(0, S.clips.findIndex(c => x >= c[0] - 1e-3 && x < c[1] - 1e-3)); } }
 function step(d){ const s = S.src; if (!s || S.tracking) return; s.pause(); seek(s.t + d); }
 
 function loop(now){
   const s = S.src;
   if (s){
     if (!s.paused && !S.tracking && S.clips && !S.holdId){
-      const t0 = s.t;
-      if (!clipAt(t0)){ const n = S.clips.find(c => c[0] > t0 - 1e-3); if (n){ if (S.exporting) recWait(); s.t = n[0]; S.lastT = n[0] - .001; } else s.pause(); }
+      const t0 = s.t, cs = S.clips, ci = curCi();
+      const jump = x => { if (S.exporting) recWait(); s.t = x; S.lastT = x - .001; };
+      if (ci < 0){ const n = cs.findIndex(c => c[0] > t0 - 1e-3); if (n >= 0){ S.ci = n; jump(cs[n][0]); } else s.pause(); }
+      else {
+        S.ci = ci;
+        if (t0 >= cs[ci][1] - 1e-3){
+          if (ci + 1 < cs.length){ S.ci = ci + 1; const nx = cs[ci + 1][0]; if (Math.abs(nx - cs[ci][1]) > .02 || t0 > nx + .1) jump(nx); }
+          else s.pause();
+        }
+      }
     }
     const cur = s.t;
     if (!s.paused && !S.tracking){
       const prev = S.lastT;
       if (cur > prev && cur - prev < 1.5){
-        const m = S.moments.find(m => m.id !== S.skipId && m.pause !== 0 && m.t > prev && m.t <= cur + 0.001);
+        const clean = fxHidden();   // 「図形なし」の部分では押すまで停止を飛ばす（フリーズは残す）
+        const m = S.moments.find(m => m.id !== S.skipId && m.pause !== 0 && !(clean && m.pause < 0) && m.t > prev && m.t <= cur + 0.001);
         if (m) hold(m);
       }
     }
@@ -567,6 +577,7 @@ function drawRingLabel(s, W, H, al, t){
 }
 function drawInk(now){
   const W = ink.width, H = ink.height; ctx.clearRect(0, 0, W, H);
+  if (fxHidden()){ S.enter.clear(); SENTER.clear(); if (S.draft) drawShape(S.draft, W, H, 1, S.src.t, 1e9); return; }
   const t = S.src.t, seen = new Set();
   drawSpots(t, W, H);
   const ground = [], top = [], vis = new Set();
@@ -940,7 +951,7 @@ function updateUI(now){
   else setBadge('');
   stage.classList.toggle('held', !!S.holdId && !S.holdUntil && !S.tracking && !S.exporting);
   stage.classList.toggle('tracking', !!S.tracking);
-  const vis = S.moments.filter(m => t >= (m.ct0 ?? m.t) - 0.045 && t < (m.cuntil ?? m.t + m.show) && m.comment.trim());
+  const vis = fxHidden() ? [] : S.moments.filter(m => t >= (m.ct0 ?? m.t) - 0.045 && t < (m.cuntil ?? m.t + m.show) && m.comment.trim());
   const cm = vis.length ? vis[vis.length-1] : null;
   const cap = $('#caption'), txt = cm ? cm.comment : '';
   S.capId = cm ? cm.id : null;
@@ -956,7 +967,7 @@ function updateUI(now){
 }
 
 /* ---------- timeline (表示期間・カット・フリーズ) ---------- */
-S.sel = null; S.selKind = null; S.pps = 40; S.ppsSet = false; S.clips = null;
+S.sel = null; S.selKind = null; S.pps = 40; S.ppsSet = false; S.clips = null; S.ci = 0;
 const SHAPE_NAMES = { arrow:'パス', ring:'選手マーク', zone:'エリア', pen:'フリー線', text:'文字', ghost:'分身', view:'視野', link:'つなぐ線', spot:'スポットライト', beam:'ライト', glow:'発光', zoom:'ZOOM' };
 function shapeLabel(s){
   if (s.type === 'text') return '文字「' + s.s.replace(/\n/g, ' ') + '」';
@@ -974,40 +985,48 @@ const clipsOf = () => S.clips || (S.src && S.src.dur ? [[0, S.src.dur]] : []);
 function ensureClips(){ if (!S.clips) S.clips = [[0, S.src.dur]]; return S.clips; }
 const clipAt = t => clipsOf().find(c => t >= c[0] - 1e-3 && t < c[1] - 1e-3);
 const inClip = (f, c) => f >= c[0] - 1e-3 && f < c[1] - .01;
+// 今再生している部分（複製で同じ時間が何度も出てくるので、番号で覚えておく）
+function curCi(){
+  const cs = clipsOf(), t = S.src ? S.src.t : 0, c = cs[S.ci];
+  if (c && t >= c[0] - .05 && t <= c[1] + .3) return S.ci;
+  return cs.findIndex(c => t >= c[0] - 1e-3 && t < c[1] - 1e-3);
+}
+const fxHidden = () => { if (!S.clips || !S.src) return false; const i = curCi(); return i >= 0 && !!S.clips[i][2]; };
 function freezeList(){ return S.moments.filter(m => m.pause > 0 && clipsOf().some(c => inClip(m.t, c))).sort((a, b) => a.t - b.t); }
 let TL = { segs:[], dur:0 };
 function buildTL(){
   const segs = [], fz = freezeList(); let o = 0;
-  for (const c of clipsOf()){
-    const seg = { kind:'clip', c, o, a:c[0], b:c[1], fz:[] }; segs.push(seg);
+  clipsOf().forEach((c, ci) => {
+    const seg = { kind:'clip', c, ci, o, a:c[0], b:c[1], fz:[] }; segs.push(seg);
     let x = c[0];
-    for (const m of fz) if (inClip(m.t, c)){ const t = Math.max(m.t, x); o += t - x; x = t; const f = { kind:'f', m, t, dur:m.pause, o }; segs.push(f); seg.fz.push(f); o += m.pause; }
+    for (const m of fz) if (inClip(m.t, c)){ const t = Math.max(m.t, x); o += t - x; x = t; const f = { kind:'f', m, t, dur:m.pause, o, ci }; segs.push(f); seg.fz.push(f); o += m.pause; }
     o += c[1] - x; seg.end = o;
-  }
+  });
   TL = { segs, dur:o };
 }
+function srcToOutSeg(t, s){ let o = s.o + (clamp(t, s.a, s.b) - s.a); for (const f of s.fz) if (f.t < t - 1e-4) o += f.dur; return o; }
 function srcToOut(t){
-  for (const s of TL.segs){
-    if (s.kind !== 'clip') continue;
-    if (t < s.a) return s.o;
-    if (t <= s.b){ let o = s.o + (t - s.a); for (const f of s.fz) if (f.t < t - 1e-4) o += f.dur; return o; }
-  }
+  const ci = curCi(), sg = ci >= 0 ? TL.segs.find(s => s.kind === 'clip' && s.ci === ci) : null;
+  if (sg) return srcToOutSeg(t, sg);
+  for (const s of TL.segs) if (s.kind === 'clip' && t < s.a) return s.o;
   return TL.dur;
 }
-function outToSrc(x, end){
+function outLoc(x, end){
   for (const s of TL.segs){
     if (s.kind !== 'clip' || x > s.end + 1e-6) continue;
-    if (x < s.o) return s.a;
+    if (x < s.o) return { t:s.a, ci:s.ci };
     let y = x - s.o, t = s.a;
     for (const f of s.fz){
-      const v = f.t - t; if (y <= v) return t + y;
-      y -= v; if (y < f.dur) return end ? f.t + .05 : f.t;
+      const v = f.t - t; if (y <= v) return { t:t + y, ci:s.ci };
+      y -= v; if (y < f.dur) return { t:end ? f.t + .05 : f.t, ci:s.ci };
       y -= f.dur; t = f.t;
     }
-    return Math.min(s.b, t + y);
+    return { t:Math.min(s.b, t + y), ci:s.ci };
   }
-  const cs = clipsOf(); return cs.length ? cs[cs.length-1][1] : 0;
+  const cs = clipsOf(); return { t:cs.length ? cs[cs.length-1][1] : 0, ci:cs.length - 1 };
 }
+const outToSrc = (x, end) => outLoc(x, end).t;
+function seekOut(x){ const L = outLoc(x); seek(L.t); if (S.clips) S.ci = L.ci; }
 function outNow(){
   const s = S.src; let x = srcToOut(s.t);
   if (S.holdId){
@@ -1025,9 +1044,16 @@ function tlItems(){
       out.push({ key:s, kind:'s', m, s, start, end:Math.max(start + .1, s.type === 'link' ? linkEnd(m, s) : shapeEnd(m, s)), label:shapeLabel(s), c:s.c || '#ffffff' });
     }
   }
-  return out.filter(it => clipsOf().some(c => it.start < c[1] && it.end > c[0]))
-    .map(it => (it.x0 = srcToOut(it.start), it.x1 = Math.max(srcToOut(it.end), it.x0 + .05), it))
-    .sort((a, b) => a.x0 - b.x0 || a.x1 - b.x1);
+  // 動画の部分ごとに置く（複製した部分には同じ図形がもう一度並ぶ。「図形なし」の部分には並べない）
+  const res = [];
+  for (const g of TL.segs){
+    if (g.kind !== 'clip' || g.c[2]) continue;
+    for (const it of out) if (it.start < g.b && it.end > g.a){
+      const x0 = srcToOutSeg(Math.max(it.start, g.a), g), x1 = Math.max(srcToOutSeg(Math.min(it.end, g.b), g), x0 + .05);
+      res.push({ ...it, x0, x1, ci:g.ci });
+    }
+  }
+  return res.sort((a, b) => a.x0 - b.x0 || a.x1 - b.x1);
 }
 function setSpan(it, start, end, dt){
   if (it.kind === 'c'){ const m = it.m; if (Math.abs(start - m.t) < .02) delete m.ct0; else m.ct0 = start; m.cuntil = end; return; }
@@ -1092,7 +1118,7 @@ function renderTracks(){
   TL.segs.forEach((g, gi) => {
     const el = document.createElement('div'); el.dataset.g = gi;
     if (g.kind === 'clip'){
-      el.className = 'tl2-clip' + (S.sel === g.c && S.selKind === 'clip' ? ' sel' : '');
+      el.className = 'tl2-clip' + (S.sel === g.c && S.selKind === 'clip' ? ' sel' : '') + (g.c[2] ? ' nofx' : '');
       const w = (g.end - g.o) * pps; el.style.left = g.o * pps + 'px'; el.style.width = Math.max(6, w) + 'px';
       const n = Math.min(300, Math.ceil(w / tw)), sw = n ? w / n : tw; let hh = '';
       for (let i = 0; i < n; i++){ const t = outToSrc(g.o + (i + .5) * sw / pps), k = Math.round(t / TH.step), im = TH.imgs.get(k);
@@ -1120,9 +1146,9 @@ function selItem(){ return tlList.find(x => x.key === S.sel && x.kind === S.selK
 function select(key, kind){ S.sel = key; S.selKind = key ? kind : null; }
 function renderTlBar(){
   const bar = $('#tl2Bar');
-  let h = '<div class="tl2-row"><span class="tl2-title">タイムライン</span><button type="button" data-a="split" title="今の位置で動画を2つに分ける">✂ 分割</button><button type="button" data-a="freeze" class="frzb" title="今の位置に3秒のフリーズ（静止画）を入れる">❄ フリーズ</button><span class="sp"></span><span style="display:flex;gap:4px"><button type="button" class="z" data-z="-1" title="縮小">−</button><button type="button" class="z" data-z="1" title="拡大">＋</button></span></div>';
+  let h = '<div class="tl2-row"><span class="tl2-title">タイムライン</span><button type="button" data-a="split" title="今の位置で動画を2つに分ける">✂ 分割</button><button type="button" data-a="dup" title="選んだ部分（または今の位置の部分）をすぐ後ろにもう一度入れる">⧉ 複製</button><button type="button" data-a="freeze" class="frzb" title="今の位置に3秒のフリーズ（静止画）を入れる">❄ フリーズ</button><span class="sp"></span><span style="display:flex;gap:4px"><button type="button" class="z" data-z="-1" title="縮小">−</button><button type="button" class="z" data-z="1" title="拡大">＋</button></span></div>';
   let name = '', range = '', acts = '';
-  if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = '<button type="button" data-a="split">ここで分割</button><button type="button" class="del" data-a="delclip">この部分を削除</button>'; }
+  if (S.selKind === 'clip'){ const c = S.sel; name = '動画の部分'; range = `${fmt(c[0])}〜${fmt(c[1])}`; acts = `<button type="button" data-a="split">ここで分割</button><button type="button" data-a="dup">複製</button><button type="button" data-a="fx" aria-pressed="${!c[2]}">図形：${c[2] ? 'なし' : 'あり'}</button><button type="button" class="del" data-a="delclip">この部分を削除</button>`; }
   else if (S.selKind === 'f'){ const m = S.sel; name = '❄ フリーズ'; range = `${m.pause.toFixed(1)}秒`; acts = '<button type="button" data-a="f-">−0.5秒</button><button type="button" data-a="f+">＋0.5秒</button><button type="button" class="del" data-a="delf">削除</button>'; }
   else { const it = selItem(); if (it){ name = it.label; range = `${fmt(it.start)}〜${fmt(it.end)}`; acts = (it.s && it.s.type === 'ring' ? '<input class="nm" type="text" maxlength="16" placeholder="名前・背番号" aria-label="選手の名前">' : '') + '<button type="button" data-a="from">今の位置から</button><button type="button" data-a="to">今の位置まで</button><button type="button" class="del" data-a="del">削除</button>'; } }
   if (name) h += `<div class="tl2-row"><span class="selname"></span><span class="rng">${range}</span>${acts}<button type="button" data-a="x">選択解除</button></div>`;
@@ -1134,9 +1160,16 @@ function renderTlBar(){
     nm.onchange = () => { snapshot(); const v = nm.value.trim(); if (v) it.s.label = v; else delete it.s.label; save(); renderList(); }; }
 }
 function splitAt(t){
-  const cs = ensureClips(), i = cs.findIndex(c => t > c[0] + .1 && t < c[1] - .1);
+  const cs = ensureClips(), ok = c => c && t > c[0] + .1 && t < c[1] - .1;
+  const pref = S.selKind === 'clip' ? cs.indexOf(S.sel) : curCi(), i = ok(cs[pref]) ? pref : cs.findIndex(ok);
   if (i < 0){ toast('動画の端に近すぎるか、削除した部分です。少し動かしてから押してください'); return false; }
-  snapshot(); const c = cs[i]; cs.splice(i, 1, [c[0], t], [t, c[1]]); select(cs[i + 1], 'clip'); save(); renderList(); toast('分割しました。いらない部分を選んで「この部分を削除」で消せます', 3200); return true;
+  snapshot(); const c = cs[i]; cs.splice(i, 1, [c[0], t, ...c.slice(2)], [t, c[1], ...c.slice(2)]); select(cs[i + 1], 'clip'); save(); renderList(); toast('分割しました。いらない部分を選んで「この部分を削除」で消せます', 3200); return true;
+}
+function dupClip(){
+  const cs = ensureClips(); let i = S.selKind === 'clip' ? cs.indexOf(S.sel) : curCi();
+  if (i < 0){ toast('複製したい動画の部分を選ぶか、その部分に再生位置を合わせてください'); return; }
+  snapshot(); const cp = cs[i].slice(); cs.splice(i + 1, 0, cp); select(cp, 'clip'); save(); renderList();
+  toast('すぐ後ろに複製しました。「図形：なし」にすると、その部分だけ図形を出さずに流せます', 3600);
 }
 function addFreeze(t){
   if (!clipAt(t)){ toast('削除した部分にはフリーズを入れられません'); return; }
@@ -1152,6 +1185,8 @@ $('#tl2Bar').addEventListener('click', e => {
   if (a === 'x'){ select(null); renderTracks(); return; }
   if (a === 'split'){ S.src.pause(); splitAt(now); return; }
   if (a === 'freeze'){ S.src.pause(); clearHold(); addFreeze(now); return; }
+  if (a === 'dup'){ S.src.pause(); clearHold(); dupClip(); return; }
+  if (a === 'fx'){ const c = S.sel; if (!c) return; snapshot(); if (c[2]) c.length = 2; else c[2] = 1; save(); renderList(); return; }
   if (a === 'delclip'){
     const cs = ensureClips(); if (cs.length <= 1){ toast('全部は削除できません。先に「分割」してから、いらない部分を削除してください', 3600); return; }
     snapshot(); cs.splice(cs.indexOf(S.sel), 1); select(null); save(); renderList(); toast('削除しました（元に戻すで戻せます）'); return;
@@ -1193,7 +1228,7 @@ $('#tl2Inner').addEventListener('pointerdown', e => {
   if (mode === 'pick' || mode === 'tap') return;
   e.preventDefault(); $('#tl2Inner').setPointerCapture(e.pointerId); S.src.pause(); clearHold();
   if (type === 'bar'){ tlDrag.start = it.start; tlDrag.end = it.end; tlDrag.x0 = it.x0; tlDrag.x1 = it.x1; it.origTrack = it.s && it.s.track ? it.s.track.map(k => k.slice()) : null; }
-  if (type === 'clip'){ const cs = clipsOf(), i = cs.indexOf(key); tlDrag.a = key[0]; tlDrag.b = key[1]; tlDrag.lo = i > 0 ? cs[i-1][1] : 0; tlDrag.hi = i < cs.length - 1 ? cs[i+1][0] : S.src.dur; }
+  if (type === 'clip'){ const cs = clipsOf(), i = cs.indexOf(key); tlDrag.a = key[0]; tlDrag.b = key[1]; tlDrag.lo = 0; tlDrag.hi = S.src.dur; }
   if (type === 'frz') tlDrag.dur = key.pause;
 });
 $('#tl2Inner').addEventListener('pointermove', e => {
@@ -1219,13 +1254,13 @@ $('#tl2Inner').addEventListener('pointermove', e => {
 function tlUp(e){
   const D = tlDrag; tlDrag = null; if (!D) return;
   const tap = Math.hypot(e.clientX - D.x, e.clientY - D.y) < 8;
-  if (D.mode === 'seek'){ if (tap){ S.src.pause(); seek(outToSrc(tlX(e))); select(null); renderTracks(); } return; }
+  if (D.mode === 'seek'){ if (tap){ S.src.pause(); seekOut(tlX(e)); select(null); renderTracks(); } return; }
   if (D.mode === 'pick' || D.mode === 'tap'){
     if (!tap) return;
     S.src.pause();
-    if (D.type === 'bar'){ select(D.key, D.kind); seek(clamp(D.it.start + .02, 0, D.it.end - .03)); if (S.tool !== 'move' && D.kind === 's') setTool('move'); }
-    else if (D.type === 'clip'){ select(D.key, 'clip'); seek(outToSrc(tlX(e))); }
-    else { select(D.key, 'f'); seek(D.key.t); }
+    if (D.type === 'bar'){ select(D.key, D.kind); seekOut(D.it.x0 + Math.min(.02, (D.it.x1 - D.it.x0) / 2)); if (S.tool !== 'move' && D.kind === 's') setTool('move'); }
+    else if (D.type === 'clip'){ select(D.key, 'clip'); seekOut(tlX(e)); }
+    else { select(D.key, 'f'); seekOut(D.g.o); }
     renderTracks(); return;
   }
   if (D.moved){ save(); renderList(); }
@@ -1708,8 +1743,8 @@ function exportTick(){
   const d = S.src.dur || 1;
   $('#exBar').style.width = (clamp(S.src.t / d, 0, 1) * 100).toFixed(1) + '%';
   $('#exNote').textContent = `${fmt(S.src.t)} / ${fmt(d)}　${held ? '一時停止の場面を録画中' : '再生しながら録画中'}`;
-  const endT = S.clips ? S.clips[S.clips.length-1][1] : d;
-  if (!held && (video.ended || (video.paused && S.src.t >= endT - 0.06))) finishExport(false);
+  const atEnd = S.clips ? (curCi() === S.clips.length - 1 && S.src.t >= S.clips[S.clips.length-1][1] - .06) : S.src.t >= d - .06;
+  if (!held && (video.ended || (video.paused && atEnd))) finishExport(false);
 }
 async function startExport(){
   $('#exModal').hidden = true;
@@ -1736,7 +1771,7 @@ async function startExport(){
   S.exportBlob = null; S.exporting = { cv, ctx:cv.getContext('2d'), rec, chunks, mm, holdSec:exHoldSec, cancelled:false };
   $('#exTitle').textContent = '書き出し中…'; $('#exBar').style.width = '0%'; $('#exStop').textContent = '中止'; $('#exSave').hidden = true; $('#exShare').hidden = true; $('#exHint').hidden = true; $('#exProg').hidden = false;
   S.src.rate = 1; S.enter.clear();
-  await new Promise(res => { const fin = () => { video.removeEventListener('seeked', fin); res(); }; video.addEventListener('seeked', fin); setTimeout(fin, 1500); seek(S.clips ? S.clips[0][0] : 0); });
+  await new Promise(res => { const fin = () => { video.removeEventListener('seeked', fin); res(); }; video.addEventListener('seeked', fin); setTimeout(fin, 1500); seek(S.clips ? S.clips[0][0] : 0); S.ci = 0; });
   if (!S.exporting) return;
   exportTick();
   rec.start(1000);
