@@ -1,7 +1,7 @@
 // K-analyst service worker
 // アプリを更新したら VERSION の数字を上げる（index.html の ?v= も合わせて上げる）
-const VERSION = 'k-analyst-v8';
-const SHELL = ['./', './index.html', './css/app.css?v=8', './js/app.js?v=8', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+const VERSION = 'k-analyst-v9';
+const SHELL = ['./', './index.html', './css/app.css?v=9', './js/app.js?v=9', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

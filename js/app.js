@@ -15,7 +15,7 @@ const HINTS = {
   spot: '<b>スポットライト</b>：目立たせたい選手や場所を四角で囲むと、そこだけ明るく周りが暗くなる。選手マークの「スポット」を押すと、追いかけながら照らせる。',
   pulse: '<b>強調</b>：矢印・選手マーク・エリア・文字などをタップすると、膨らむ・縮むをくり返して目立つ。もう一度タップで解除。間隔はツール欄で選ぶ。',
   view: '<b>視野</b>：選手の足元（選手マーク）から、見ている方向へドラッグ。選手マークから描くと、選手が動いても視野がついていく。「移動」で先端の●で向きと距離、横の○で広さを変える。',
-  link: '<b>つなぐ</b>：選手マークを順にタップすると線でつながる。続けてタップすると連続でつなげる（DFラインなど）。Escか別のツールで終了。',
+  link: '<b>つなぐ</b>：選手の足元を順にタップすると、黒い円盤ができて光る線でつながる（DFラインなど）。今ある選手マークをタップすればそれにつなぐ。終わるときは最後の丸をもう一度タップ（Esc か別のツールでも終了）。',
   ring: '<b>選手</b>：選手の足元から外へドラッグしてマーク。右の場面リストの「自動で追いかける」で映像の動きについていきます。',
   ghost: '<b>分身</b>：動かしたい選手を四角で囲む → 分身ができるので、本当にいてほしかった位置へドラッグ。',
   tri: '<b>三角</b>：ドラッグで三角のエリアを描く。描いたあと自動で「移動」になるので、角の●を引いて形を整えてください。',
@@ -344,11 +344,22 @@ function drawShape(s, W, H, al, t, age){
     const A = findShape(s.from), B = findShape(s.to);
     if (A && B){
       const [x1,y1] = P(ringCenter(A.s, t)), [x2,y2] = P(ringCenter(B.s, t));
-      c.lineWidth = lw*.7; c.globalAlpha = al*Math.max(A.s.op ?? .6, B.s.op ?? .6); c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke();
+      const disc = A.s.st === 'disc' || B.s.st === 'disc';
+      c.lineWidth = disc ? lw*1.15 : lw*.7; c.globalAlpha = al*Math.max(A.s.op ?? .6, B.s.op ?? .6);
+      if (disc){ c.shadowColor = hexA(s.c, .9); c.shadowBlur = lw*3; }
+      c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke();
     }
   } else if (s.type === 'ring'){
     const ctr = ringCenter(s, t), [cx,cy] = P(ctr), r = Math.max(lw*4, Math.hypot((s.b[0]-s.a[0])*W, (s.b[1]-s.a[1])*H));
     const op = s.op ?? .6;
+    if (s.st === 'disc'){
+      // 円盤：黒い丸＋色の光るふち
+      c.save(); c.globalAlpha = al*Math.max(op, .6);
+      c.shadowColor = hexA(s.c, .95); c.shadowBlur = lw*4.5; c.fillStyle = 'rgba(8,10,9,.92)';
+      c.beginPath(); c.ellipse(cx, cy, r, r*.42, 0, 0, Math.PI*2); c.fill();
+      c.shadowBlur = lw*2; c.lineWidth = lw*.55; c.strokeStyle = s.c; c.stroke(); c.restore();
+      c.restore(); return;
+    }
     c.lineWidth = lw*.7; c.shadowBlur = lw*.8;
     if (s.st === 'dash') c.setLineDash([lw*1.3, lw*1.1]);
     c.beginPath(); c.ellipse(cx, cy, r, r*.42, 0, 0, Math.PI*2);
@@ -598,6 +609,7 @@ function drawInk(now){
   for (const k of [...SENTER.keys()]) if (!vis.has(k)) SENTER.delete(k);
   const prot = S.protect && ground.length && !S.drag && video.videoWidth;
   if (prot){ ctx = groundCtx(W, H); }
+  ground.sort((p, q) => (p[0].type === 'link' ? 0 : 1) - (q[0].type === 'link' ? 0 : 1));   // つなぐ線は円盤の下に
   for (const [s, al, age, sa] of ground) drawFx(s, W, H, al, t, age, sa);
   if (prot){ cutPlayers(W, H); ctx = inkCtx; ctx.drawImage(GR.cv, 0, 0); }
   for (const [s, al, age, sa] of top) drawFx(s, W, H, al, t, age, sa);
@@ -689,13 +701,20 @@ ink.addEventListener('pointerdown', e => {
   }
   if (S.tool === 'erase'){ const h = hitTest(p); if (!h){ toast('消したい図形をタップしてください'); return; } snapshot(); h.m.shapes.splice(h.i, 1); pruneLinks(); save(); renderList(); return; }
   if (S.tool === 'link'){
-    const h = hitTest(p, 'ring');
-    if (!h){ toast('選手マークをタップしてください（先に「選手」でマークを付けます）'); return; }
+    let h = hitTest(p, 'ring'), made = false;
+    if (!h){
+      // 何もない所をタップ：その場所に円盤（選手の足元に置く黒い丸）を作ってつなぐ
+      const prev = S.linkFrom && findShape(S.linkFrom), pr = prev ? Math.hypot(prev.s.b[0]-prev.s.a[0], prev.s.b[1]-prev.s.a[1]) : .032;
+      snapshot(); made = true;
+      const m = ensureMoment(S.src.t), ring = { type:'ring', st:'disc', op:1, c:S.color, a:p, b:[p[0] + pr, p[1]], id:uid() };
+      m.shapes.push(ring); h = { m, s:ring };
+    }
     if (!h.s.id) h.s.id = uid();
     const ref = [h.m.id, h.s.id];
-    if (!S.linkFrom){ S.linkFrom = ref; S.hover = p; toast('次につなぐ選手マークをタップ'); return; }
-    if (S.linkFrom[1] === ref[1]){ S.linkFrom = null; return; }
-    snapshot(); ensureMoment(S.src.t).shapes.push({ type:'link', c:S.color, from:S.linkFrom, to:ref });
+    if (!S.linkFrom){ S.linkFrom = ref; S.hover = p; if (made){ save(); renderList(); } toast('次の場所（または選手マーク）をタップ。終わるときは最後の丸をもう一度タップ'); return; }
+    if (S.linkFrom[1] === ref[1]){ S.linkFrom = null; toast('つなぐのを終わりました'); return; }
+    if (!made) snapshot();
+    ensureMoment(S.src.t).shapes.push({ type:'link', c:S.color, from:S.linkFrom, to:ref });
     S.linkFrom = ref; save(); renderList(); return;
   }
   if (S.tool === 'pulse'){
@@ -1518,7 +1537,7 @@ function renderList(){
         extra = `<button type="button" data-a="edit">文字を直す</button><button type="button" data-a="fs">大きさ：${sizeName(s.fs)}</button><button type="button" data-a="bg">${bgDot(cur.key)}背景：${cur.name}</button>`;
       } else if (s.type === 'ring'){
         const opL = { 1:'濃い', 0.6:'普通', 0.3:'薄い' }[s.op ?? .6] || '普通', te = trackEnd(s);
-        extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
+        extra = `<button type="button" data-a="st">${s.st === 'dash' ? '点線' : s.st === 'disc' ? '円盤' : '実線'}</button><button type="button" data-a="op">${opL}</button><button type="button" data-a="hl" aria-pressed="${!!s.hl}">スポット</button><button type="button" data-a="label">${s.label ? '名前：' + esc(s.label) : '名前'}</button><button type="button" data-a="track">自動で追いかける</button>${te > 0 ? '<button type="button" data-a="retrack" title="今の位置からもう一度追いかける（それより前はそのまま）">ここから追いかけ直す</button><button type="button" data-a="clear">追従をやめる</button>' : ''}`;
       } else if (s.type === 'ghost'){
         extra = `<button type="button" data-a="replay">動きを見せる</button><button type="button" data-a="label">ラベル</button><button type="button" data-a="erase" aria-pressed="${!!s.erase}">元の選手：${s.erase ? '消す' : '残す'}</button>`;
       } else if (s.type === 'zoom'){
@@ -1535,7 +1554,7 @@ function renderList(){
       if (s.type === 'text') q('fs').onclick = () => { snapshot(); s.fs = nextSize(s.fs); if (s.fs === 1) delete s.fs; save(); renderList(); };
       if (s.type === 'text') q('bg').onclick = () => { snapshot(); const i = BGS.findIndex(b => b[0] === (s.bg || 'dark')); s.bg = BGS[(i+1) % BGS.length][0]; save(); renderList(); };
       if (s.type === 'ring'){
-        q('st').onclick = () => { snapshot(); s.st = s.st === 'dash' ? 'solid' : 'dash'; save(); renderList(); };
+        q('st').onclick = () => { snapshot(); s.st = s.st === 'dash' ? 'disc' : s.st === 'disc' ? 'solid' : 'dash'; save(); renderList(); };
         q('hl').onclick = () => { snapshot(); if (s.hl) delete s.hl; else s.hl = true; save(); renderList(); };
         q('op').onclick = () => { snapshot(); const cur = s.op ?? .6; s.op = cur === 1 ? .6 : cur === .6 ? .3 : 1; save(); renderList(); };
         q('track').onclick = () => { snapshot(); autoTrack(m, s); };
