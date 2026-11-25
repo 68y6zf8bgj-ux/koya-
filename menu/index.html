@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>トレーニングメニュー作成</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+/* VOICE: 指導者が迷わず書ける、静かな1枚の資料
+   IDEA: 上から順に埋めると、そのままJFA風のA4資料になる
+   PICTURE: 大きな緑のコートと、下に完成した1枚の資料
+   COLOUR and TYPE: 白地・濃紺#13284b・KEY FACTORの黒、芝の緑、選手は青と赤。Noto Sans JP
+   LAYOUT: 1列。1 基本情報 → 2 コート → 3 オーガナイズ → 4 KEY FACTOR → 完成イメージ */
+:root{color-scheme:light;--navy:#13284b;--ink:#141821;--mute:#5d6676;--line:#d9dee7;--bg:#f3f5f8}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 "Noto Sans JP",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{min-height:40px;padding:0 14px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;white-space:nowrap}
+button:disabled{opacity:.4;cursor:default}
+button.pri{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:700}
+input,select,textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;font-size:16px}
+textarea{resize:vertical;line-height:1.55}
+input[type=checkbox]{width:20px;height:20px;padding:0;accent-color:var(--navy)}
+input[type=range]{padding:0;border:0;accent-color:var(--navy)}
+input[type=color]{width:42px;height:40px;padding:2px}
+:focus-visible{outline:3px solid #6aa0ff;outline-offset:1px}
+label{display:grid;gap:3px;font-size:13px;color:var(--mute);margin-bottom:10px}
+label.chk{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font-size:15px;margin:0 16px 8px 0}
+.hide{display:none!important}
+.hint{color:var(--mute);font-size:13px;margin:6px 0 0}
+
+.top{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line)}
+.top-in{max-width:960px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.top b{font-weight:900;color:var(--navy);font-size:17px;margin-right:auto}
+.saved{font-size:12px;color:var(--mute)}
+.strip{border-top:1px solid var(--line);background:#f8f9fb}
+.strip-in{max-width:960px;margin:0 auto;padding:8px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.slides{display:flex;gap:8px;overflow-x:auto;flex:1 1 300px;padding:2px}
+.sl{flex:none;width:132px;border:2px solid var(--line);border-radius:8px;background:#fff;padding:3px;cursor:pointer;text-align:left;min-height:0}
+.sl.on{border-color:var(--navy)}
+.sl .th{width:124px;height:88px;overflow:hidden;border-radius:4px;pointer-events:none}.sl .th .pg{transform:scale(.1104);transform-origin:0 0}
+.sl span{display:block;font-size:12px;line-height:1.3;padding:3px 2px 0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sl span b{color:var(--navy);margin-right:4px}
+.sctl{display:flex;gap:6px;flex-wrap:wrap}.sctl button{min-height:36px;padding:0 10px}
+main{max-width:960px;margin:0 auto;padding:16px;display:grid;gap:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h2{margin:0 0 12px;font-size:17px;color:var(--navy);display:flex;align-items:center;gap:10px}
+.card h2 .no{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--navy);color:#fff;font-size:14px}
+.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:0 10px 10px 0;vertical-align:top}
+.seg button{border:0;border-radius:0}.seg button[aria-pressed=true]{background:var(--navy);color:#fff}
+.opts{display:flex;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.pal{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+.pal button{display:inline-flex;align-items:center;gap:6px}
+.sw{width:14px;height:14px;border-radius:50%;display:inline-block;border:1px solid #0003}
+.sw.tri{border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}.sw.sq{border-radius:2px}
+.courtBox{background:#2f7a3f;border-radius:10px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+.courtBox svg{display:block;width:100%;height:auto;max-height:70vh;margin:0 auto}
+.ob{cursor:grab}
+.selbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;min-height:42px}
+.selbar label{display:inline-flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:14px}
+.selbar input[type=text]{width:70px}
+.org label{margin-bottom:8px}
+.prevBox{overflow:hidden;border-radius:6px;box-shadow:0 6px 24px -12px #0006}
+.prevBox .pg{transform-origin:0 0}
+.outrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.exhost{position:fixed;left:0;top:0;z-index:-10;pointer-events:none}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50;max-width:90vw}
+#toast.on{opacity:1}
+
+/* ===== 資料（A4横 1123×794px） ===== */
+.pg{width:1123px;height:794px;background:#fff;padding:28px 32px;overflow:hidden;font-family:"Noto Sans JP",sans-serif;color:#111}
+.pg-in{width:1059px;transform-origin:0 0}
+.sh{display:flex;align-items:center;gap:14px;border-bottom:3px solid #13284b;padding-bottom:10px;margin-bottom:14px}
+.sh .cat{background:#13284b;color:#fff;font-weight:900;font-size:18px;padding:2px 12px;border-radius:4px;white-space:nowrap}
+.sh h1{margin:0;font-size:26px;line-height:1.2;font-weight:900;color:#13284b}
+.sh .th{font-size:14px;font-weight:700;margin-top:2px}
+.sh dl{display:flex;gap:18px;margin:0 0 0 auto;flex:none}.sh dt{font-size:11px;color:#667}.sh dd{margin:0;font-weight:700;font-size:15px}
+.bd{display:grid;grid-template-columns:var(--cw) minmax(0,1fr);gap:20px;align-items:start}
+.cc svg{display:block;width:100%;height:auto;border-radius:4px}
+.tx{font-size:14px;line-height:1.6}
+.tx h4{margin:0 0 6px;font-size:14px;font-weight:900}
+.org4 h4{color:#13284b;border-bottom:2px solid #13284b;padding-bottom:2px}
+.og{margin-bottom:5px}.og b{display:block;font-size:13.5px}.og b::before{content:"■ ";color:#13284b}
+.tx ul{margin:0;padding-left:1.3em}
+.kf{margin-top:14px}.kf h4{background:#000;color:#fff;padding:4px 10px;letter-spacing:.04em}
+.gp{margin-top:14px;border-top:1px dashed #9aa6b8;padding-top:8px;font-size:13.5px}.gp b{color:#13284b}
+
+@media(max-width:640px){.g3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.top b{font-size:15px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <b>トレーニングメニュー作成</b>
+  <span id="saved" class="saved"></span>
+  <button id="undo">↶ 戻る</button><button id="redo">進む ↷</button>
+  <button id="toPrev">完成イメージ</button><button id="topPdf" class="pri">PDF保存</button>
+</div>
+<nav class="strip"><div class="strip-in">
+  <div id="slides" class="slides"></div>
+  <div class="sctl"><button id="slAdd" class="pri">＋ メニュー追加</button><button id="slDup">複製</button><button id="slL" aria-label="前へ移動">←</button><button id="slR" aria-label="後ろへ移動">→</button><button id="slDel">削除</button></div>
+</div></nav></header>
+
+<main>
+  <section class="card">
+    <h2><span class="no">1</span>基本情報</h2>
+    <label>トレーニング名<input data-k="name" placeholder="例：3vs3＋サーバー"></label>
+    <div class="g3">
+      <label>分類<select data-k="cat"><option>W-up</option><option>Tr.1</option><option>Tr.2</option><option>Tr.3</option><option>Game</option></select></label>
+      <label>年代<input data-k="age" list="ages" placeholder="U-12"></label>
+      <label>時間（分）<input data-k="time" inputmode="numeric" placeholder="15"></label>
+    </div>
+    <div class="g2">
+      <label>テーマ<input data-k="theme" placeholder="例：ゴールを目指す"></label>
+      <label>人数<input data-k="people" placeholder="例：8人（3vs3＋2）"></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="no">2</span>コートと配置</h2>
+    <div class="g2">
+      <label>コート<select data-k="court.type"><option value="full">全面（105×68m）</option><option value="half">半面（52.5×68m）</option><option value="quarter">1/4面（52.5×34m）</option><option value="custom">自由設定</option></select></label>
+      <div class="g2" id="cDims"><label>縦（m）<input type="number" data-k="court.cl" min="5" max="150"></label><label>横（m）<input type="number" data-k="court.cw" min="5" max="100"></label></div>
+    </div>
+    <div class="opts">
+      <div class="seg" data-seg="court.orient"><button data-v="h">横向き</button><button data-v="v">縦向き</button></div>
+      <label class="chk"><input type="checkbox" data-k="court.goals">ゴール</label>
+      <label class="chk"><input type="checkbox" data-k="court.pa">ペナルティエリア</label>
+      <label class="chk"><input type="checkbox" data-k="court.center">センターライン</label>
+    </div>
+    <div class="g2">
+      <label>選手・道具の大きさ<input type="range" data-k="court.sym" min="0.6" max="1.8" step="0.1"></label>
+      <label>資料でのコートの大きさ<input type="range" data-k="cw" min="35" max="70" step="1"></label>
+    </div>
+    <div class="pal" id="pal"></div>
+    <div id="courtBox" class="courtBox"></div>
+    <div id="selbar" class="selbar"></div>
+    <p class="hint">ボタンで追加 → ドラッグで移動。タップで選ぶと番号・色の変更や削除ができます。</p>
+  </section>
+
+  <section class="card org">
+    <h2><span class="no">3</span>オーガナイズ</h2>
+    <p class="hint" style="margin:-6px 0 10px">1行ごとに箇条書きになります。空欄の項目は資料に出ません。</p>
+    <div class="g2"><label>大きさ<textarea rows="1" data-k="org.size"></textarea></label><label>人数<textarea rows="1" data-k="org.num"></textarea></label></div>
+    <label>方法<textarea rows="3" data-k="org.how"></textarea></label>
+    <label>ルール<textarea rows="2" data-k="org.rule"></textarea></label>
+    <label>オプション<textarea rows="2" data-k="org.opt"></textarea></label>
+  </section>
+
+  <section class="card">
+    <h2><span class="no">4</span>KEY FACTOR</h2>
+    <textarea rows="4" data-k="kf" placeholder="1行に1つずつ"></textarea>
+    <label style="margin:12px 0 0">GPポイント・補足（任意）<textarea rows="2" data-k="gp" placeholder="空欄なら資料に出ません"></textarea></label>
+  </section>
+
+  <section class="card" id="prevCard">
+    <h2>完成イメージ（A4横）<span id="pgNo" class="hint" style="margin:0;font-weight:400"></span></h2>
+    <div id="prevBox" class="prevBox"></div>
+    <div class="outrow"><button id="outPdf" class="pri">PDFで保存（全メニューを1つのファイルに）</button><button id="outPng">このメニューを画像（PNG）で保存</button></div>
+  </section>
+</main>
+<datalist id="ages"><option>U-8</option><option>U-10</option><option>U-12</option><option>U-14</option><option>U-15</option><option>U-18</option><option>一般</option></datalist>
+<div id="toast"></div>
+
+<script>
+{
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Math.random().toString(36).slice(2,10);
+const getP=(o,p)=>p.split('.').reduce((a,k)=>a?.[k],o);
+const setP=(o,p,v)=>{const ks=p.split('.'),l=ks.pop();ks.reduce((a,k)=>a[k],o)[l]=v};
+const ink=hex=>{const v=parseInt(String(hex).slice(1),16);if(isNaN(v))return'#fff';return(0.299*(v>>16&255)+0.587*(v>>8&255)+0.114*(v&255))/255>0.62?'#111':'#fff'};
+let toastT;const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),2600)};
+const TYPES={home:{name:'自チーム',color:'#1f5fbf',pl:1},away:{name:'相手',color:'#d62f2f',pl:1},neutral:{name:'フリーマン',color:'#f2b705',pl:1},gk:{name:'GK',color:'#1c9c5a',pl:1},
+  ball:{name:'ボール',color:'#ffffff'},cone:{name:'コーン',color:'#ff7a00'},marker:{name:'マーカー',color:'#ffd21f'},goal:{name:'ゴール',color:'#ffffff'}};
+
+function blank(){return{name:'',cat:'Tr.1',age:'U-12',time:'15',theme:'',people:'',cw:52,
+  court:{type:'custom',cl:30,cw:20,orient:'h',goals:true,pa:false,center:true,sym:1},objs:[],
+  org:{size:'',num:'',how:'',rule:'',opt:''},kf:'',gp:''}}
+function sample(){const m=blank();Object.assign(m,{name:'3vs3＋サーバー',theme:'ゴールに向かう',people:'8人（3vs3＋サーバー2人）'});
+  const{L,W}=dims(m.court),P=(type,fu,fv,n='')=>({id:uid(),type,u:fu*W,v:fv*L,n:String(n),color:TYPES[type].color,rot:0,size:3});
+  m.objs=[P('home',.3,.3,1),P('home',.72,.38,2),P('home',.48,.56,3),P('away',.38,.42,1),P('away',.62,.5,2),P('away',.5,.72,3),P('neutral',-.09,.5,'S'),P('neutral',1.09,.5,'S'),P('ball',.34,.26)];
+  m.org={size:'30m×20m（ゴール2つ）',num:'3vs3＋サーバー2人',how:'サーバーを使いながらゴールを目指す\n得点したら攻守を入れ替える',rule:'サーバーは2タッチ以内\nサーバーは攻撃側のみプレー',opt:'サーバーを縦に配置する'};
+  m.kf='ゴールに向かうプレーを優先する\n前を向ける状況をつくる\nサーバーを使った後の関わり';m.gp='シュートを打てる時は迷わず打つ';return m}
+
+const KEY='tmenu-simple-v1';
+let D=null;try{D=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(D&&D.court)D={slides:[D],cur:0};
+if(!D||!Array.isArray(D.slides)||!D.slides.length)D={slides:[sample()],cur:0};
+if(!(D.cur>=0&&D.cur<D.slides.length))D.cur=0;
+let S=D.slides[D.cur];
+let sel=null;
+let svT;const save=()=>{clearTimeout(svT);svT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(D));$('saved').textContent='自動保存済み'}catch(e){$('saved').textContent=''}},300)};
+
+/* 戻る・進む */
+let H=[],F=[],pend=null;
+const hb=()=>{$('undo').disabled=!H.length;$('redo').disabled=!F.length};
+function snap(){H.push(JSON.stringify(D));if(H.length>60)H.shift();F=[];pend=null;hb()}
+function edit(){if(pend){H.push(pend);if(H.length>60)H.shift();pend=null;F=[];hb()}}
+document.addEventListener('focusin',e=>{if(e.target.matches('input,textarea,select'))pend=JSON.stringify(D)});
+const restore=j=>{D=JSON.parse(j);S=D.slides[D.cur];sel=null;fillForm();update();drawSlides();hb()};
+$('undo').onclick=()=>{if(!H.length)return;F.push(JSON.stringify(D));restore(H.pop())};
+$('redo').onclick=()=>{if(!F.length)return;H.push(JSON.stringify(D));restore(F.pop())};
+
+/* ---------- コート ---------- */
+function dims(c){switch(c.type){case'full':return{L:105,W:68};case'half':return{L:52.5,W:68};case'quarter':return{L:52.5,W:34};default:return{L:+c.cl||30,W:+c.cw||20}}}
+function geo(m=S){const c=m.court,{L,W}=dims(c),v=c.orient==='v';return{c,L,W,v,P:(u,w)=>v?[u,w]:[w,W-u],k:Math.max(L,W)/60*(+c.sym||1),M:Math.max(3,Math.max(L,W)*.05)}}
+function courtSvg(m,edit){
+  const{c,L,W,v,P,k,M}=geo(m),pt=(u,w)=>P(u,w).map(n=>n.toFixed(2)).join(',');
+  const vbW=(v?W:L)+2*M,vbH=(v?L:W)+2*M,lw=Math.max(.12,Math.max(L,W)/360);
+  const R=(u0,v0,u1,v1,a='')=>{const[x1,y1]=P(u0,v0),[x2,y2]=P(u1,v1);return`<rect x="${Math.min(x1,x2).toFixed(2)}" y="${Math.min(y1,y2).toFixed(2)}" width="${Math.abs(x2-x1).toFixed(2)}" height="${Math.abs(y2-y1).toFixed(2)}" ${a}/>`};
+  const arc=(cu,cv,r,a0,a1)=>{const s=[];for(let i=0;i<=28;i++){const a=a0+(a1-a0)*i/28;s.push(pt(cu+r*Math.cos(a),cv+r*Math.sin(a)))}return`<polyline points="${s.join(' ')}"/>`};
+  const f=c.type==='custom'?Math.max(.25,Math.min(1,(W-2)/40.32,L*.3/16.5)):1;
+  let g=`<rect x="${-M}" y="${-M}" width="${vbW}" height="${vbH}" fill="#2f7a3f"/>`;
+  const nS=Math.max(4,Math.round(L/8));for(let i=0;i<nS;i++)g+=R(0,L*i/nS,W,L*(i+1)/nS,`fill="${i%2?'#3b8d4d':'#409653'}"`);
+  let mk=R(0,0,W,L);const ends=(c.type==='full'||c.type==='custom')?[0,L]:[L];
+  if(c.center){if(c.type==='half')mk+=arc(W/2,0,9.15,0,Math.PI);
+    else if(c.type!=='quarter'){const[a,b]=P(0,L/2),[a2,b2]=P(W,L/2),[cx,cy]=P(W/2,L/2);
+      mk+=`<line x1="${a}" y1="${b}" x2="${a2}" y2="${b2}"/><circle cx="${cx}" cy="${cy}" r="${(9.15*f).toFixed(2)}"/>`;g+=`<circle cx="${cx}" cy="${cy}" r="${lw*1.6}" fill="#fff"/>`}}
+  if(c.pa)for(const e of ends){const d=e===0?1:-1,pw=40.32*f,pd=16.5*f,gw=18.32*f,gd=5.5*f,sp=11*f,r=9.15*f;
+    mk+=R(Math.max(0,W/2-pw/2),e,Math.min(W,W/2+pw/2),e+d*pd)+R(W/2-gw/2,e,W/2+gw/2,e+d*gd);
+    const h=Math.acos(Math.min(1,(pd-sp)/r)),base=d>0?Math.PI/2:-Math.PI/2;mk+=arc(W/2,e+d*sp,r,base-h,base+h);
+    const[sx,sy]=P(W/2,e+d*sp);g+=`<circle cx="${sx}" cy="${sy}" r="${lw*1.6}" fill="#fff"/>`}
+  let goals='';if(c.goals)for(const e of ends){const d=e===0?1:-1,gw=c.type==='custom'?Math.max(3,7.32*f):7.32,dep=Math.min(M*.8,2*Math.max(f,.6));
+    goals+=R(W/2-gw/2,e,W/2+gw/2,e-d*dep,`fill="#ffffff55" stroke="#fff" stroke-width="${lw*1.3}"`)}
+  g+=`<g fill="none" stroke="#fff" stroke-width="${lw}" stroke-opacity=".92">${mk}</g>${goals}`;
+  for(const o of m.objs)g+=objSvg(o,P,k,lw,edit);
+  return`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${(-M).toFixed(2)} ${(-M).toFixed(2)} ${vbW.toFixed(2)} ${vbH.toFixed(2)}" font-family="Noto Sans JP, sans-serif">${g}</svg>`}
+function objSvg(o,P,k,lw,edit){
+  const[x,y]=P(o.u,o.v),col=o.color||'#fff';let s='',hr=1.6*k;
+  if(TYPES[o.type]?.pl){const r=1.15*k,n=String(o.n??'');
+    s=`<circle r="${r}" cx="${.12*k}" cy="${.18*k}" fill="#0004"/><circle r="${r}" fill="${col}" stroke="#fff" stroke-width="${lw*1.2}"/>`+(n?`<text y="${(r*.4).toFixed(2)}" text-anchor="middle" font-size="${(n.length>2?r*.85:r*1.15).toFixed(2)}" font-weight="700" fill="${ink(col)}">${esc(n)}</text>`:'')}
+  else if(o.type==='ball'){const r=.55*k;hr=1.3*k;s=`<circle r="${r}" fill="#fff" stroke="#111" stroke-width="${lw}"/><circle r="${r*.38}" fill="#111"/>`}
+  else if(o.type==='cone'){const a=.85*k;s=`<polygon points="0,${-a} ${a*.85},${a*.75} ${-a*.85},${a*.75}" fill="${col}" stroke="#fff" stroke-width="${lw*.8}"/>`}
+  else if(o.type==='marker')s=`<ellipse rx="${.75*k}" ry="${.42*k}" fill="${col}" stroke="#0005" stroke-width="${lw*.6}"/>`;
+  else if(o.type==='goal'){const gw=(+o.size||3)*Math.max(1,k*.6),d=Math.max(.8,gw*.3);hr=gw/2+.4;
+    s=`<g transform="rotate(${o.rot||0})"><rect x="${-gw/2}" y="${-d/2}" width="${gw}" height="${d}" fill="#ffffff44" stroke="${col}" stroke-width="${lw*1.4}"/><line x1="${-gw/2}" y1="${d/2}" x2="${gw/2}" y2="${d/2}" stroke="${col}" stroke-width="${lw*2.4}"/></g>`}
+  const ring=edit&&sel===o.id?`<circle r="${hr}" fill="none" stroke="#fff" stroke-width="${lw*1.4}" stroke-dasharray="${lw*3} ${lw*2.4}"/>`:'';
+  return`<g class="ob" data-id="${esc(o.id)}" transform="translate(${x.toFixed(2)} ${y.toFixed(2)})">${edit?`<circle r="${hr}" fill="transparent"/>`:''}${s}${ring}</g>`}
+
+const box=$('courtBox');let drag=null;
+const svgPt=(svg,e)=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse())};
+box.addEventListener('touchstart',e=>{if(e.target.closest('.ob'))e.preventDefault()},{passive:false});
+box.addEventListener('pointerdown',e=>{const svg=box.querySelector('svg'),g=e.target.closest('.ob');
+  if(!g){if(sel){sel=null;drawCourt();drawSel()}return}
+  e.preventDefault();sel=g.dataset.id;drawCourt();drawSel();const o=S.objs.find(x=>x.id===sel),sv=box.querySelector('svg');
+  drag={o,sv,p:svgPt(sv,e),u:o.u,v:o.v,before:JSON.stringify(D),moved:false};box.setPointerCapture(e.pointerId)});
+box.addEventListener('pointermove',e=>{if(!drag)return;const q=svgPt(drag.sv,e),dx=q.x-drag.p.x,dy=q.y-drag.p.y;
+  if(!drag.moved&&Math.hypot(dx,dy)<.3)return;drag.moved=true;const{v,P,L,W,M}=geo(),o=drag.o;
+  o.u=Math.max(-M+.5,Math.min(W+M-.5,drag.u+(v?dx:-dy)));o.v=Math.max(-M+.5,Math.min(L+M-.5,drag.v+(v?dy:dx)));
+  const el=drag.sv.querySelector(`.ob[data-id="${CSS.escape(o.id)}"]`),[x,y]=P(o.u,o.v);el?.setAttribute('transform',`translate(${x.toFixed(2)} ${y.toFixed(2)})`)});
+const end=()=>{if(!drag)return;const d=drag;drag=null;if(d.moved){H.push(d.before);F=[];hb();update()}};
+box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);
+
+function nextNo(type){const ns=S.objs.filter(o=>o.type===type).map(o=>parseInt(o.n)).filter(n=>!isNaN(n));return ns.length?Math.max(...ns)+1:1}
+$('pal').innerHTML=Object.entries(TYPES).map(([k,v])=>`<button data-add="${k}"><span class="sw${k==='cone'?' tri':k==='goal'?' sq':''}" style="background:${v.color}"></span>${v.name}</button>`).join('');
+$('pal').onclick=e=>{const b=e.target.closest('[data-add]');if(!b)return;const type=b.dataset.add,{L,W}=dims(S.court),c=S.objs.length%6;snap();
+  const o={id:uid(),type,u:W/2+(c-2.5)*Math.min(W/8,3),v:L/2+(c%2?2:-2),n:TYPES[type].pl?String(nextNo(type)):'',color:TYPES[type].color,rot:0,size:3};
+  S.objs.push(o);sel=o.id;update();drawSel()};
+function drawCourt(){box.innerHTML=courtSvg(S,true)}
+function drawSel(){const o=S.objs.find(x=>x.id===sel),bar=$('selbar');
+  if(!o){bar.innerHTML='<span class="hint" style="margin:0">選手や道具をタップすると、ここで編集できます</span>';return}
+  bar.innerHTML=`<b style="color:var(--navy)">${TYPES[o.type].name}</b>
+  ${TYPES[o.type].pl?`<label>番号<input type="text" id="sNo" maxlength="3" value="${esc(o.n)}"></label>`:''}
+  <label>色<input type="color" id="sCol" value="${esc(o.color)}"></label>
+  ${o.type==='goal'?'<button id="sRot">向きを変える</button>':''}
+  <button id="sCopy">コピー</button><button id="sDel">削除</button>`}
+$('selbar').addEventListener('input',e=>{const o=S.objs.find(x=>x.id===sel);if(!o)return;edit();
+  if(e.target.id==='sNo')o.n=e.target.value.slice(0,3);if(e.target.id==='sCol')o.color=e.target.value;update()});
+$('selbar').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const o=S.objs.find(x=>x.id===sel);if(!o)return;snap();
+  if(b.id==='sDel'){S.objs=S.objs.filter(x=>x!==o);sel=null}
+  else if(b.id==='sCopy'){const k=geo().k*2.2,c={...o,id:uid(),u:o.u+k,v:o.v+k};if(TYPES[o.type].pl)c.n=String(nextNo(o.type));S.objs.push(c);sel=c.id}
+  else if(b.id==='sRot')o.rot=((o.rot||0)+90)%360;
+  update();drawSel()});
+document.addEventListener('keydown',e=>{const typing=/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if((e.ctrlKey||e.metaKey)&&!typing&&e.key.toLowerCase()==='z'){e.preventDefault();$(e.shiftKey?'redo':'undo').click();return}
+  if(typing||!sel)return;if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();snap();S.objs=S.objs.filter(x=>x.id!==sel);sel=null;update();drawSel()}});
+
+/* ---------- 入力 ---------- */
+function fillForm(){document.querySelectorAll('[data-k]').forEach(el=>{const v=getP(S,el.dataset.k);if(el.type==='checkbox')el.checked=!!v;else el.value=v??''});
+  document.querySelectorAll('[data-seg]').forEach(s=>s.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===getP(S,s.dataset.seg))));
+  $('cDims').classList.toggle('hide',S.court.type!=='custom');drawSel()}
+function onField(e){const el=e.target;if(!el.dataset.k)return;const k=el.dataset.k;
+  let val=el.type==='checkbox'?el.checked:(el.type==='range'||el.type==='number')?+el.value:el.value;
+  if((k==='court.cl'||k==='court.cw')&&!(val>=5&&val<=150))return;
+  edit();const b=dims(S.court);setP(S,k,val);
+  if(k.startsWith('court.')){const a=dims(S.court);if(a.L!==b.L||a.W!==b.W)S.objs.forEach(o=>{o.u*=a.W/b.W;o.v*=a.L/b.L});$('cDims').classList.toggle('hide',S.court.type!=='custom')}
+  update(k.startsWith('court.'))}
+document.querySelector('main').addEventListener('input',onField);
+document.querySelectorAll('[data-seg]').forEach(s=>s.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;snap();setP(S,s.dataset.seg,b.dataset.v);fillForm();update()}));
+
+/* ---------- 資料 ---------- */
+const lines=t=>String(t||'').split('\n').map(s=>s.replace(/^\s*[・\-\*•]\s*/,'').trim()).filter(Boolean);
+const ul=t=>{const ls=lines(t);return ls.length?`<ul>${ls.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`:''};
+function pageHtml(S){
+  const org=[['大きさ','size'],['人数','num'],['方法','how'],['ルール','rule'],['オプション','opt']].filter(([,k])=>lines(S.org[k]).length).map(([l,k])=>`<div class="og"><b>${l}</b>${ul(S.org[k])}</div>`).join('');
+  const meta=[['年代',S.age],['時間',S.time&&`${S.time}分`],['人数',S.people]].filter(([,v])=>v);
+  return`<div class="pg"><div class="pg-in">
+<header class="sh"><span class="cat">${esc(S.cat)}</span><div><h1>${esc(S.name||'トレーニング名')}</h1>${S.theme?`<div class="th">テーマ：${esc(S.theme)}</div>`:''}</div>
+<dl>${meta.map(([a,b])=>`<div><dt>${a}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl></header>
+<div class="bd" style="--cw:${+S.cw||52}%"><div class="cc">${courtSvg(S,false)}</div>
+<div class="tx">${org?`<section class="org4"><h4>オーガナイズ</h4>${org}</section>`:''}${lines(S.kf).length?`<section class="kf"><h4>KEY FACTOR</h4>${ul(S.kf)}</section>`:''}${lines(S.gp).length?`<section class="gp"><b>GPポイント・補足</b>${ul(S.gp)}</section>`:''}</div></div>
+</div></div>`}
+const AV=794-56,IW=1059;
+function fit(pg){const inn=pg.querySelector('.pg-in');inn.style.transform='';inn.style.width='';let s=1;
+  for(let i=0;i<6;i++){const h=inn.offsetHeight*s;if(h<=AV+.5)break;s=s*AV/h*.995;inn.style.width=(IW/s)+'px';inn.style.transform=`scale(${s})`}}
+function drawPrev(){const b=$('prevBox');b.innerHTML=pageHtml(S);const pg=b.firstChild;fit(pg);const z=b.clientWidth/1123;pg.style.transform=`scale(${z})`;b.style.height=(794*z)+'px'}
+function update(court=true){if(court)drawCourt();drawPrev();thumb();save()}
+function slideBtn(m,i){return`<button class="sl${i===D.cur?' on':''}" data-i="${i}"><div class="th">${pageHtml(m)}</div><span><b>${i+1}</b>${esc(m.cat)} ${esc(m.name||'無題')}</span></button>`}
+function drawSlides(){$('slides').innerHTML=D.slides.map(slideBtn).join('');$('slides').querySelectorAll('.pg').forEach(fit);
+  $('slL').disabled=D.cur===0;$('slR').disabled=D.cur===D.slides.length-1;$('pgNo').textContent=`　${D.cur+1} / ${D.slides.length}枚目`;
+  $('slides').querySelector('.sl.on')?.scrollIntoView({block:'nearest',inline:'nearest'})}
+let thT;function thumb(){clearTimeout(thT);thT=setTimeout(()=>{const el=$('slides').querySelector(`.sl[data-i="${D.cur}"]`);if(!el){drawSlides();return}
+  el.outerHTML=slideBtn(S,D.cur);fit($('slides').querySelector(`.sl[data-i="${D.cur}"] .pg`))},250)}
+function go(i){D.cur=i;S=D.slides[i];sel=null;fillForm();drawCourt();drawPrev();drawSlides();save()}
+$('slides').onclick=e=>{const b=e.target.closest('.sl');if(b)go(+b.dataset.i)};
+$('slAdd').onclick=()=>{snap();const m=blank();m.age=S.age;D.slides.splice(D.cur+1,0,m);go(D.cur+1);window.scrollTo({top:0,behavior:'smooth'});toast('新しいメニューを追加しました')};
+$('slDup').onclick=()=>{snap();const m=JSON.parse(JSON.stringify(S));m.objs.forEach(o=>o.id=uid());D.slides.splice(D.cur+1,0,m);go(D.cur+1);toast('複製しました')};
+$('slL').onclick=()=>{if(D.cur<1)return;snap();const i=D.cur;[D.slides[i-1],D.slides[i]]=[D.slides[i],D.slides[i-1]];go(i-1)};
+$('slR').onclick=()=>{if(D.cur>=D.slides.length-1)return;snap();const i=D.cur;[D.slides[i+1],D.slides[i]]=[D.slides[i],D.slides[i+1]];go(i+1)};
+$('slDel').onclick=e=>{const b=e.currentTarget;if(!b.dataset.armed){b.dataset.armed=1;b.textContent='本当に削除';setTimeout(()=>{delete b.dataset.armed;b.textContent='削除'},2500);return}
+  delete b.dataset.armed;b.textContent='削除';snap();D.slides.splice(D.cur,1);if(!D.slides.length)D.slides.push(blank());go(Math.min(D.cur,D.slides.length-1));toast('削除しました（「戻る」で元に戻せます）')};
+
+/* ---------- 出力 ---------- */
+const loadS=src=>new Promise((ok,ng)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=ng;document.head.appendChild(s)});
+async function capture(list){
+  if(!window.html2canvas)await loadS('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+  try{await document.fonts.ready}catch(e){}
+  const host=document.createElement('div');host.className='exhost';host.innerHTML=list.map(pageHtml).join('');document.body.appendChild(host);
+  const pgs=[...host.querySelectorAll('.pg')];pgs.forEach(fit);const out=[];
+  try{for(const pg of pgs)out.push(await html2canvas(pg,{scale:2.5,backgroundColor:'#ffffff',scrollX:0,scrollY:-window.scrollY,windowWidth:1400,logging:false}))}finally{host.remove()}
+  return out}
+const fname=()=>[S.cat,S.name||'トレーニング'].join('_').replace(/[\\/:*?"<>|\s]+/g,'_');
+function download(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000)}
+async function run(btn,fn){const t=btn.textContent;btn.disabled=true;btn.textContent='作成中…';try{await fn()}catch(e){console.error(e);toast('保存できませんでした。通信状態を確認してもう一度お試しください')}finally{btn.disabled=false;btn.textContent=t}}
+const pdfOut=e=>run(e.currentTarget,async()=>{const cs=await capture(D.slides);if(!window.jspdf)await loadS('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});cs.forEach((c,i)=>{if(i)pdf.addPage('a4','landscape');pdf.addImage(c.toDataURL('image/jpeg',.93),'JPEG',0,0,297,210)});
+  pdf.save(`トレーニングメニュー_${new Date().toISOString().slice(0,10)}.pdf`);toast(`${cs.length}枚を1つのPDFにしました`)});
+$('outPdf').onclick=pdfOut;$('topPdf').onclick=pdfOut;
+$('outPng').onclick=e=>run(e.currentTarget,async()=>{const[c]=await capture([S]),b=await new Promise(r=>c.toBlob(r,'image/png'));download(b,fname()+'.png');toast('画像を保存しました')});
+$('toPrev').onclick=()=>$('prevCard').scrollIntoView({behavior:'smooth'});
+
+let rzT;window.addEventListener('resize',()=>{clearTimeout(rzT);rzT=setTimeout(drawPrev,120)});
+if(document.fonts)document.fonts.ready.then(drawPrev);
+fillForm();update();drawSlides();hb();
+}
+</script>
+</body>
+</html>
