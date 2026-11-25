@@ -35,11 +35,11 @@ label.chk{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font-s
 .top b{font-weight:900;color:var(--navy);font-size:17px;margin-right:auto}
 .saved{font-size:12px;color:var(--mute)}
 .strip{border-top:1px solid var(--line);background:#f8f9fb}
-.strip-in{max-width:960px;margin:0 auto;padding:8px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.strip-in{max-width:960px;margin:0 auto;padding:6px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .slides{display:flex;gap:8px;overflow-x:auto;flex:1 1 300px;padding:2px}
-.sl{flex:none;width:132px;border:2px solid var(--line);border-radius:8px;background:#fff;padding:3px;cursor:pointer;text-align:left;min-height:0}
+.sl{flex:none;width:104px;border:2px solid var(--line);border-radius:8px;background:#fff;padding:3px;cursor:pointer;text-align:left;min-height:0}
 .sl.on{border-color:var(--navy)}
-.sl .th{width:124px;height:88px;overflow:hidden;border-radius:4px;pointer-events:none}.sl .th .pg{transform:scale(.1104);transform-origin:0 0}
+.sl .th{width:96px;height:68px;overflow:hidden;border-radius:4px;pointer-events:none}.sl .th .pg{transform:scale(.0855);transform-origin:0 0}
 .sl span{display:block;font-size:12px;line-height:1.3;padding:3px 2px 0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .sl span b{color:var(--navy);margin-right:4px}
 .sctl{display:flex;gap:6px;flex-wrap:wrap}.sctl button{min-height:36px;padding:0 10px}
@@ -59,6 +59,9 @@ main{max-width:960px;margin:0 auto;padding:16px;display:grid;gap:14px}
 .courtBox{background:#2f7a3f;border-radius:10px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 .courtBox svg{display:block;width:100%;height:auto;max-height:70vh;margin:0 auto}
 .ob{cursor:grab}
+.zbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px}.zbar button{min-width:44px;font-size:18px;font-weight:700}.zbar #zFit{font-size:14px;font-weight:400}
+#zLab{min-width:44px;text-align:center;font-weight:700;color:var(--navy)}
+.nud{display:inline-grid;grid-template-columns:repeat(4,40px);gap:4px}.nud button{padding:0;min-height:38px}
 .selbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;min-height:42px}
 .selbar label{display:inline-flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:14px}
 .selbar input[type=text]{width:70px}
@@ -138,6 +141,7 @@ main{max-width:960px;margin:0 auto;padding:16px;display:grid;gap:14px}
       <label>資料でのコートの大きさ<input type="range" data-k="cw" min="35" max="70" step="1"></label>
     </div>
     <div class="pal" id="pal"></div>
+    <div class="zbar"><button id="zOut" aria-label="縮小">－</button><span id="zLab">×1.0</span><button id="zIn" aria-label="拡大">＋</button><button id="zFit">全体を表示</button><span class="hint" style="margin:0">拡大中は、何もない所をドラッグして見る場所を動かせます（2本指でも拡大・縮小）</span></div>
     <div id="courtBox" class="courtBox"></div>
     <div id="selbar" class="selbar"></div>
     <p class="hint">ボタンで追加 → ドラッグで移動。タップで選ぶと番号・色の変更や削除ができます。</p>
@@ -246,18 +250,39 @@ function objSvg(o,P,k,lw,edit){
   const ring=edit&&sel===o.id?`<circle r="${hr}" fill="none" stroke="#fff" stroke-width="${lw*1.4}" stroke-dasharray="${lw*3} ${lw*2.4}"/>`:'';
   return`<g class="ob" data-id="${esc(o.id)}" transform="translate(${x.toFixed(2)} ${y.toFixed(2)})">${edit?`<circle r="${hr}" fill="transparent"/>`:''}${s}${ring}</g>`}
 
-const box=$('courtBox');let drag=null;
+const box=$('courtBox');let drag=null,pinch=null,base=null;const ptrs=new Map();
+const vw={z:1,cx:null,cy:null};
 const svgPt=(svg,e)=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse())};
-box.addEventListener('touchstart',e=>{if(e.target.closest('.ob'))e.preventDefault()},{passive:false});
-box.addEventListener('pointerdown',e=>{const svg=box.querySelector('svg'),g=e.target.closest('.ob');
-  if(!g){if(sel){sel=null;drawCourt();drawSel()}return}
-  e.preventDefault();sel=g.dataset.id;drawCourt();drawSel();const o=S.objs.find(x=>x.id===sel),sv=box.querySelector('svg');
-  drag={o,sv,p:svgPt(sv,e),u:o.u,v:o.v,before:JSON.stringify(D),moved:false};box.setPointerCapture(e.pointerId)});
-box.addEventListener('pointermove',e=>{if(!drag)return;const q=svgPt(drag.sv,e),dx=q.x-drag.p.x,dy=q.y-drag.p.y;
-  if(!drag.moved&&Math.hypot(dx,dy)<.3)return;drag.moved=true;const{v,P,L,W,M}=geo(),o=drag.o;
+function setVB(){const svg=box.querySelector('svg');if(!svg||!base)return;const[x,y,w,h]=base;
+  if(vw.z<=1.001||vw.cx==null){if(vw.z<=1.001)vw.z=1;vw.cx=vw.cx??x+w/2;vw.cy=vw.cy??y+h/2}
+  const w2=w/vw.z,h2=h/vw.z;vw.cx=Math.max(x+w2/2,Math.min(x+w-w2/2,vw.cx));vw.cy=Math.max(y+h2/2,Math.min(y+h-h2/2,vw.cy));
+  svg.setAttribute('viewBox',`${vw.cx-w2/2} ${vw.cy-h2/2} ${w2} ${h2}`);$('zLab').textContent=`×${vw.z.toFixed(1)}`;$('zOut').disabled=vw.z<=1;$('zIn').disabled=vw.z>=6}
+function zoomTo(z,px,py){const nz=Math.max(1,Math.min(6,z));if(px!=null&&vw.cx!=null){vw.cx=px+(vw.cx-px)*vw.z/nz;vw.cy=py+(vw.cy-py)*vw.z/nz}vw.z=nz;setVB()}
+const resetView=()=>{vw.z=1;vw.cx=vw.cy=null};
+$('zIn').onclick=()=>zoomTo(vw.z*1.5);$('zOut').onclick=()=>zoomTo(vw.z/1.5);$('zFit').onclick=()=>{resetView();drawCourt()};
+box.addEventListener('touchstart',e=>{if(e.target.closest('svg'))e.preventDefault()},{passive:false});
+box.addEventListener('wheel',e=>{if(!e.ctrlKey)return;e.preventDefault();const svg=box.querySelector('svg'),p=svgPt(svg,e);zoomTo(vw.z*(e.deltaY<0?1.15:1/1.15),p.x,p.y)},{passive:false});
+box.addEventListener('pointerdown',e=>{const svg=box.querySelector('svg');if(!svg)return;e.preventDefault();
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});box.setPointerCapture(e.pointerId);
+  if(ptrs.size===2){if(drag&&drag.kind==='obj'&&drag.moved){H.push(drag.before);F=[];hb();update()}drag=null;
+    const[a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1,z:vw.z};return}
+  if(ptrs.size>2)return;
+  const g=e.target.closest('.ob');
+  if(g){sel=g.dataset.id;drawCourt();drawSel();const o=S.objs.find(x=>x.id===sel),sv=box.querySelector('svg');
+    drag={kind:'obj',o,sv,p:svgPt(sv,e),u:o.u,v:o.v,before:JSON.stringify(D),moved:false}}
+  else drag={kind:'pan',sv:svg,sx:e.clientX,sy:e.clientY,cx:vw.cx,cy:vw.cy,moved:false}});
+box.addEventListener('pointermove',e=>{if(ptrs.has(e.pointerId))ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pinch&&ptrs.size===2){const[a,b]=[...ptrs.values()];zoomTo(pinch.z*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d);return}
+  if(!drag)return;
+  if(drag.kind==='pan'){const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy;if(!drag.moved&&Math.hypot(dx,dy)<5)return;drag.moved=true;
+    if(vw.z<=1)return;const k=(base[2]/vw.z)/drag.sv.clientWidth;vw.cx=drag.cx-dx*k;vw.cy=drag.cy-dy*k;setVB();return}
+  const q=svgPt(drag.sv,e),dx=q.x-drag.p.x,dy=q.y-drag.p.y;
+  if(!drag.moved&&Math.hypot(dx,dy)<.3/vw.z)return;drag.moved=true;const{v,P,L,W,M}=geo(),o=drag.o;
   o.u=Math.max(-M+.5,Math.min(W+M-.5,drag.u+(v?dx:-dy)));o.v=Math.max(-M+.5,Math.min(L+M-.5,drag.v+(v?dy:dx)));
   const el=drag.sv.querySelector(`.ob[data-id="${CSS.escape(o.id)}"]`),[x,y]=P(o.u,o.v);el?.setAttribute('transform',`translate(${x.toFixed(2)} ${y.toFixed(2)})`)});
-const end=()=>{if(!drag)return;const d=drag;drag=null;if(d.moved){H.push(d.before);F=[];hb();update()}};
+const end=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;if(!drag)return;const d=drag;drag=null;
+  if(d.kind==='obj'&&d.moved){H.push(d.before);F=[];hb();update()}
+  else if(d.kind==='pan'&&!d.moved&&sel){sel=null;drawCourt();drawSel()}};
 box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);
 
 function nextNo(type){const ns=S.objs.filter(o=>o.type===type).map(o=>parseInt(o.n)).filter(n=>!isNaN(n));return ns.length?Math.max(...ns)+1:1}
@@ -265,13 +290,14 @@ $('pal').innerHTML=Object.entries(TYPES).map(([k,v])=>`<button data-add="${k}"><
 $('pal').onclick=e=>{const b=e.target.closest('[data-add]');if(!b)return;const type=b.dataset.add,{L,W}=dims(S.court),c=S.objs.length%6;snap();
   const o={id:uid(),type,u:W/2+(c-2.5)*Math.min(W/8,3),v:L/2+(c%2?2:-2),n:TYPES[type].pl?String(nextNo(type)):'',color:TYPES[type].color,rot:0,size:3};
   S.objs.push(o);sel=o.id;update();drawSel()};
-function drawCourt(){box.innerHTML=courtSvg(S,true)}
+function drawCourt(){box.innerHTML=courtSvg(S,true);base=box.querySelector('svg').getAttribute('viewBox').split(' ').map(Number);setVB()}
 function drawSel(){const o=S.objs.find(x=>x.id===sel),bar=$('selbar');
   if(!o){bar.innerHTML='<span class="hint" style="margin:0">選手や道具をタップすると、ここで編集できます</span>';return}
   bar.innerHTML=`<b style="color:var(--navy)">${TYPES[o.type].name}</b>
   ${TYPES[o.type].pl?`<label>番号<input type="text" id="sNo" maxlength="3" value="${esc(o.n)}"></label>`:''}
   <label>色<input type="color" id="sCol" value="${esc(o.color)}"></label>
   ${o.type==='goal'?'<button id="sRot">向きを変える</button>':''}
+  <span class="nud" aria-label="少しずつ動かす"><button data-nd="-1,0" aria-label="左へ">←</button><button data-nd="0,-1" aria-label="上へ">↑</button><button data-nd="0,1" aria-label="下へ">↓</button><button data-nd="1,0" aria-label="右へ">→</button></span>
   <button id="sCopy">コピー</button><button id="sDel">削除</button>`}
 $('selbar').addEventListener('input',e=>{const o=S.objs.find(x=>x.id===sel);if(!o)return;edit();
   if(e.target.id==='sNo')o.n=e.target.value.slice(0,3);if(e.target.id==='sCol')o.color=e.target.value;update()});
@@ -279,6 +305,7 @@ $('selbar').addEventListener('click',e=>{const b=e.target.closest('button');if(!
   if(b.id==='sDel'){S.objs=S.objs.filter(x=>x!==o);sel=null}
   else if(b.id==='sCopy'){const k=geo().k*2.2,c={...o,id:uid(),u:o.u+k,v:o.v+k};if(TYPES[o.type].pl)c.n=String(nextNo(o.type));S.objs.push(c);sel=c.id}
   else if(b.id==='sRot')o.rot=((o.rot||0)+90)%360;
+  else if(b.dataset.nd){const[dx,dy]=b.dataset.nd.split(',').map(Number),st=.25,{v}=geo();if(v){o.u+=dx*st;o.v+=dy*st}else{o.v+=dx*st;o.u-=dy*st}update();return}
   update();drawSel()});
 document.addEventListener('keydown',e=>{const typing=/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if((e.ctrlKey||e.metaKey)&&!typing&&e.key.toLowerCase()==='z'){e.preventDefault();$(e.shiftKey?'redo':'undo').click();return}
@@ -292,7 +319,7 @@ function onField(e){const el=e.target;if(!el.dataset.k)return;const k=el.dataset
   let val=el.type==='checkbox'?el.checked:(el.type==='range'||el.type==='number')?+el.value:el.value;
   if((k==='court.cl'||k==='court.cw')&&!(val>=5&&val<=150))return;
   edit();const b=dims(S.court);setP(S,k,val);
-  if(k.startsWith('court.')){const a=dims(S.court);if(a.L!==b.L||a.W!==b.W)S.objs.forEach(o=>{o.u*=a.W/b.W;o.v*=a.L/b.L});$('cDims').classList.toggle('hide',S.court.type!=='custom')}
+  if(k.startsWith('court.')){if(k!=='court.sym')resetView();const a=dims(S.court);if(a.L!==b.L||a.W!==b.W)S.objs.forEach(o=>{o.u*=a.W/b.W;o.v*=a.L/b.L});$('cDims').classList.toggle('hide',S.court.type!=='custom')}
   update(k.startsWith('court.'))}
 document.querySelector('main').addEventListener('input',onField);
 document.querySelectorAll('[data-seg]').forEach(s=>s.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;snap();setP(S,s.dataset.seg,b.dataset.v);fillForm();update()}));
@@ -320,7 +347,7 @@ function drawSlides(){$('slides').innerHTML=D.slides.map(slideBtn).join('');$('s
   $('slides').querySelector('.sl.on')?.scrollIntoView({block:'nearest',inline:'nearest'})}
 let thT;function thumb(){clearTimeout(thT);thT=setTimeout(()=>{const el=$('slides').querySelector(`.sl[data-i="${D.cur}"]`);if(!el){drawSlides();return}
   el.outerHTML=slideBtn(S,D.cur);fit($('slides').querySelector(`.sl[data-i="${D.cur}"] .pg`))},250)}
-function go(i){D.cur=i;S=D.slides[i];sel=null;fillForm();drawCourt();drawPrev();drawSlides();save()}
+function go(i){D.cur=i;S=D.slides[i];sel=null;resetView();fillForm();drawCourt();drawPrev();drawSlides();save()}
 $('slides').onclick=e=>{const b=e.target.closest('.sl');if(b)go(+b.dataset.i)};
 $('slAdd').onclick=()=>{snap();const m=blank();m.age=S.age;D.slides.splice(D.cur+1,0,m);go(D.cur+1);window.scrollTo({top:0,behavior:'smooth'});toast('新しいメニューを追加しました')};
 $('slDup').onclick=()=>{snap();const m=JSON.parse(JSON.stringify(S));m.objs.forEach(o=>o.id=uid());D.slides.splice(D.cur+1,0,m);go(D.cur+1);toast('複製しました')};
