@@ -32,6 +32,7 @@ select{font-family:"Barlow Condensed",sans-serif;font-size:22px;font-weight:700}
 .board svg{display:block;width:100%;height:auto;border-radius:12px;box-shadow:0 10px 30px -12px #0008;user-select:none;-webkit-user-select:none}
 .p{cursor:grab;touch-action:none}.p:active{cursor:grabbing}
 .p .sel{display:none}.p.on .sel{display:block}
+.tools{display:flex;gap:8px;margin-bottom:8px}.tools button{flex:1;font-weight:700}.tools button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
 .side{grid-area:side;display:grid;gap:12px;align-content:start}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
 .card h2{margin:0 0 8px;font-size:16px}
@@ -73,7 +74,7 @@ button.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
       </div>
     </div>
   </div>
-  <div class="board"><svg id="pitch" viewBox="0 0 720 1090" role="img" aria-label="ピッチ"></svg></div>
+  <div class="board"><div class="tools"><button id="undo" aria-label="一つ前に戻る">↶ 戻る</button><button id="redo" aria-label="一つ先に進む">進む ↷</button><button id="ballBtn" aria-pressed="true">⚽ ボール</button></div><svg id="pitch" viewBox="0 0 720 1090" role="img" aria-label="ピッチ"></svg></div>
   <div class="side">
     <div class="card" id="ed"></div>
     <div class="card">
@@ -90,7 +91,6 @@ button.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
         <label style="display:flex;align-items:center;gap:6px;min-height:44px"><input type="checkbox" id="sr" style="width:20px;height:20px">円の下にポジション名（CBなど）を表示</label>
       </div>
       <div class="row">
-        <button id="undo">元に戻す</button>
         <button id="resetH">配置をリセット</button>
         <button id="resetA">配置をリセット</button>
       </div>
@@ -128,9 +128,11 @@ if(!S||!S.h||!S.a)S={h:{f:'4-3-3',c:'#f2b705',p:build('h','4-3-3')},a:{f:'4-5-1'
 if(!PH[S.phase])S.phase='std';
 if(typeof S.h.name!=='string')S.h.name='CERVEZA FC 東京';if(typeof S.a.name!=='string')S.a.name='対戦相手';
 const tn=t=>S[t].name||(t==='h'?'チームA':'チームB');
-let sel=null,hist=[],rT='h';
+let sel=null,hist=[],fut=[],rT='h';
+if(!S.ball)S.ball={x:360,y:545,show:true};
+const hbtn=()=>{$('undo').disabled=!hist.length;$('redo').disabled=!fut.length};
 const save=()=>{try{localStorage.setItem('fboard-v1',JSON.stringify(S))}catch(e){}};
-const snap=()=>{hist.push(JSON.stringify(S));if(hist.length>60)hist.shift();$('undo').disabled=false};
+const snap=()=>{hist.push(JSON.stringify(S));if(hist.length>80)hist.shift();fut=[];hbtn()};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ink=hex=>{const v=parseInt(hex.slice(1),16),r=v>>16&255,g=v>>8&255,b=v&255;return(0.299*r+0.587*g+0.114*b)/255>0.6?'#111':'#fff'};
 
@@ -145,6 +147,12 @@ const pitchSvg=`<rect width="720" height="1090" fill="#2a7d38"/>${stripes}
 <rect x="323.4" y="6" width="73.2" height="14"/><rect x="323.4" y="1070" width="73.2" height="14"/></g>
 <g fill="#ffffffd9"><circle cx="360" cy="545" r="4"/><circle cx="360" cy="130" r="4"/><circle cx="360" cy="960" r="4"/></g>`;
 
+function ballSvg(){const b=S.ball;return `<g class="p ball" data-t="b" data-i="0" transform="translate(${b.x.toFixed(1)} ${b.y.toFixed(1)})" tabindex="0" role="button" aria-label="ボール">
+  <circle r="32" fill="transparent"/><ellipse cx="3" cy="15" rx="13" ry="4" fill="#0005"/>
+  <circle r="14" fill="#fff" stroke="#222" stroke-width="2"/>
+  <path d="M0-5l4.8 3.5-1.8 5.6h-6l-1.8-5.6z" fill="#222"/>
+  <path d="M0-5V-13M4.8-1.5l7.5-2.5M3 4.1l4.6 6.4M-3 4.1l-4.6 6.4M-4.8-1.5l-7.5-2.5" stroke="#222" stroke-width="1.6"/></g>`}
+const obj=(t,i)=>t==='b'?S.ball:S[t].p[i];
 function player(t,p,i,c){
   const fg=ink(c),inner=S.mode==='num'?p.n:p.r,lab=p.name||(S.showRole===false?'':S.mode==='num'?p.r:'#'+p.n),on=sel&&sel.t===t&&sel.i===i;
   return `<g class="p${on?' on':''}" data-t="${t}" data-i="${i}" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})" tabindex="0" role="button" aria-label="${esc(tn(t))} ${esc(p.n)} ${esc(p.r)}">
@@ -159,7 +167,8 @@ function render(){
   const tag=(txt,y)=>`<text x="34" y="${y}" font-family="Barlow Condensed,sans-serif" font-weight="700" font-size="30" fill="#ffffffb3">${esc(txt)}</text>`;
   svg.innerHTML=`<defs><radialGradient id="gl" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".2"/></radialGradient></defs>${pitchSvg}
   ${S.show?tag(tn('a')+'  '+S.a.f,58):''}${tag(tn('h')+'  '+S.h.f,1052)}
-  ${S.show?S.a.p.map((p,i)=>player('a',p,i,S.a.c)).join(''):''}${S.h.p.map((p,i)=>player('h',p,i,S.h.c)).join('')}`;
+  ${S.show?S.a.p.map((p,i)=>player('a',p,i,S.a.c)).join(''):''}${S.h.p.map((p,i)=>player('h',p,i,S.h.c)).join('')}${S.ball.show?ballSvg():''}`;
+  $('ballBtn').setAttribute('aria-pressed',S.ball.show);
   $('hf').value=S.h.f;$('af').value=S.a.f;$('hc').value=S.h.c;$('ac').value=S.a.c;$('as').checked=S.show;$('sr').checked=S.showRole!==false;
   if(document.activeElement!==$('hn'))$('hn').value=S.h.name;if(document.activeElement!==$('an'))$('an').value=S.a.name;
   $('resetH').textContent=tn('h')+'の配置をリセット';$('resetA').textContent=tn('a')+'の配置をリセット';
@@ -205,23 +214,23 @@ function pt(e){const m=svg.getScreenCTM().inverse(),q=svg.createSVGPoint();q.x=e
 let drag=null;
 svg.addEventListener('pointerdown',e=>{
   const g=e.target.closest('.p');if(!g)return;e.preventDefault();
-  const t=g.dataset.t,i=+g.dataset.i,p=S[t].p[i],q=pt(e);
+  const t=g.dataset.t,i=+g.dataset.i,p=obj(t,i),q=pt(e);
   drag={g,t,i,ox:q.x-p.x,oy:q.y-p.y,sx:e.clientX,sy:e.clientY,moved:false,before:JSON.stringify(S)};
   g.classList.add('drag');g.parentNode.appendChild(g);g.setPointerCapture(e.pointerId);
 });
 svg.addEventListener('pointermove',e=>{
   if(!drag)return;
   if(!drag.moved&&Math.hypot(e.clientX-drag.sx,e.clientY-drag.sy)<5)return;
-  drag.moved=true;const q=pt(e),p=S[drag.t].p[drag.i];
+  drag.moved=true;const q=pt(e),p=obj(drag.t,drag.i);
   p.x=Math.max(O,Math.min(O+W,q.x-drag.ox));p.y=Math.max(O,Math.min(O+H,q.y-drag.oy));
   drag.g.setAttribute('transform',`translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
 });
 const end=()=>{if(!drag)return;const d=drag;drag=null;
-  if(d.moved){hist.push(d.before);$('undo').disabled=false}
-  sel={t:d.t,i:d.i};render()};
+  if(d.moved){hist.push(d.before);fut=[];hbtn()}
+  if(d.t!=='b')sel={t:d.t,i:d.i};render()};
 svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
 svg.addEventListener('touchstart',e=>{if(e.target.closest('.p'))e.preventDefault()},{passive:false});
-svg.addEventListener('keydown',e=>{const g=e.target.closest('.p');if(g&&(e.key==='Enter'||e.key===' ')){e.preventDefault();sel={t:g.dataset.t,i:+g.dataset.i};render()}});
+svg.addEventListener('keydown',e=>{const g=e.target.closest('.p');if(g&&g.dataset.t!=='b'&&(e.key==='Enter'||e.key===' ')){e.preventDefault();sel={t:g.dataset.t,i:+g.dataset.i};render()}});
 document.addEventListener('keydown',e=>{
   if(!sel||/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))return;
   const k={ArrowUp:[0,-5],ArrowDown:[0,5],ArrowLeft:[-5,0],ArrowRight:[5,0]}[e.key];
@@ -248,8 +257,13 @@ $('rtH').onclick=()=>{rT='h';roster();render()};$('rtA').onclick=()=>{rT='a';ros
 $('mNum').onclick=()=>{S.mode='num';render()};$('mRole').onclick=()=>{S.mode='role';render()};
 $('resetH').onclick=()=>{snap();re('h');render()};
 $('resetA').onclick=()=>{snap();re('a');render()};
-$('undo').onclick=()=>{if(!hist.length)return;S=JSON.parse(hist.pop());sel=null;$('undo').disabled=!hist.length;render()};
-$('undo').disabled=true;
+const undo=()=>{if(!hist.length)return;fut.push(JSON.stringify(S));S=JSON.parse(hist.pop());sel=null;hbtn();render()};
+const redo=()=>{if(!fut.length)return;hist.push(JSON.stringify(S));S=JSON.parse(fut.pop());sel=null;hbtn();render()};
+$('undo').onclick=undo;$('redo').onclick=redo;
+$('ballBtn').onclick=()=>{snap();S.ball.show=!S.ball.show;render()};
+document.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey)||/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;
+  const k=e.key.toLowerCase();if(k==='z'&&!e.shiftKey){e.preventDefault();undo()}else if((k==='z'&&e.shiftKey)||k==='y'){e.preventDefault();redo()}});
+hbtn();
 render();
 }
 </script>
