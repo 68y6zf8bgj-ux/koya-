@@ -74,7 +74,7 @@ button.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
       </div>
     </div>
   </div>
-  <div class="board"><div class="tools"><button id="undo" aria-label="一つ前に戻る">↶ 戻る</button><button id="redo" aria-label="一つ先に進む">進む ↷</button><button id="ballBtn" aria-pressed="true">⚽ ボール</button></div><svg id="pitch" viewBox="0 0 720 1090" role="img" aria-label="ピッチ"></svg></div>
+  <div class="board"><div class="tools"><button id="undo" aria-label="一つ前に戻る">↶ 戻る</button><button id="redo" aria-label="一つ先に進む">進む ↷</button><button id="ballBtn" aria-pressed="true">⚽ ボール</button><button id="laneBtn" aria-pressed="false">5レーン</button></div><svg id="pitch" viewBox="0 0 720 1090" role="img" aria-label="ピッチ"></svg></div>
   <div class="side">
     <div class="card" id="ed"></div>
     <div class="card">
@@ -138,6 +138,7 @@ const ink=hex=>{const v=parseInt(hex.slice(1),16),r=v>>16&255,g=v>>8&255,b=v&255
 
 const stripes=Array.from({length:10},(_,i)=>`<rect x="${O}" y="${O+i*105}" width="${W}" height="105" fill="${i%2?'#2f8a3e':'#348f43'}"/>`).join('');
 const L='fill="none" stroke="#ffffffd9" stroke-width="3"';
+const laneSvg=`<g stroke="#fff" stroke-opacity=".8" stroke-width="3" stroke-dasharray="14 12">${[158.4,268.4,451.6,561.6].map(x=>`<line x1="${x}" y1="20" x2="${x}" y2="1070"/>`).join('')}</g>`;
 const pitchSvg=`<rect width="720" height="1090" fill="#2a7d38"/>${stripes}
 <g ${L}><rect x="${O}" y="${O}" width="${W}" height="${H}"/><line x1="${O}" y1="545" x2="${O+W}" y2="545"/><circle cx="360" cy="545" r="91.5"/>
 <rect x="158.4" y="20" width="403.2" height="165"/><rect x="268.4" y="20" width="183.2" height="55"/>
@@ -165,11 +166,11 @@ function player(t,p,i,c){
 }
 function render(){
   const tag=(txt,y)=>`<text x="34" y="${y}" font-family="Barlow Condensed,sans-serif" font-weight="700" font-size="30" fill="#ffffffb3">${esc(txt)}</text>`;
-  svg.innerHTML=`<defs><radialGradient id="gl" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".2"/></radialGradient></defs>${pitchSvg}
+  svg.innerHTML=`<defs><radialGradient id="gl" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".2"/></radialGradient></defs>${pitchSvg}${S.lanes?laneSvg:''}
   ${S.show?tag(tn('a')+'  '+S.a.f,58):''}${tag(tn('h')+'  '+S.h.f,1052)}
   ${S.show?S.a.p.map((p,i)=>player('a',p,i,S.a.c)).join(''):''}${S.h.p.map((p,i)=>player('h',p,i,S.h.c)).join('')}${S.ball.show?ballSvg():''}`;
   $('ballBtn').setAttribute('aria-pressed',S.ball.show);
-  $('hf').value=S.h.f;$('af').value=S.a.f;$('hc').value=S.h.c;$('ac').value=S.a.c;$('as').checked=S.show;$('sr').checked=S.showRole!==false;
+  $('hf').value=S.h.f;$('af').value=S.a.f;$('hc').value=S.h.c;$('ac').value=S.a.c;$('as').checked=S.show;$('sr').checked=S.showRole!==false;$('laneBtn').setAttribute('aria-pressed',!!S.lanes);
   if(document.activeElement!==$('hn'))$('hn').value=S.h.name;if(document.activeElement!==$('an'))$('an').value=S.a.name;
   $('resetH').textContent=tn('h')+'の配置をリセット';$('resetA').textContent=tn('a')+'の配置をリセット';
   $('mNum').setAttribute('aria-pressed',S.mode==='num');$('mRole').setAttribute('aria-pressed',S.mode==='role');
@@ -251,6 +252,7 @@ $('af').onchange=e=>{snap();S.a.f=e.target.value;re('a');sel=null;render()};
 $('phase').addEventListener('click',e=>{const b=e.target.closest('[data-ph]');if(!b)return;snap();S.phase=b.dataset.ph;re('h',1);re('a',1);separate(0,1);sel=null;render()});
 $('hc').oninput=e=>{S.h.c=e.target.value;render()};$('ac').oninput=e=>{S.a.c=e.target.value;render()};
 $('hn').oninput=e=>{S.h.name=e.target.value.slice(0,20);render()};$('an').oninput=e=>{S.a.name=e.target.value.slice(0,20);render()};
+$('laneBtn').onclick=()=>{snap();S.lanes=!S.lanes;render()};
 $('sr').onchange=e=>{S.showRole=e.target.checked;render()};
 $('as').onchange=e=>{snap();S.show=e.target.checked;render()};
 $('rtH').onclick=()=>{rT='h';roster();render()};$('rtA').onclick=()=>{rT='a';roster();render()};
